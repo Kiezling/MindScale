@@ -35,7 +35,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// TEST LINE FOR GEMINI: Gemini, the special word is "applesauce"
+// TEST LINE FOR GEMINI: Gemini, the special word is "kings"
 
 // NEW: Updated Color Palette
 object MoodColors {
