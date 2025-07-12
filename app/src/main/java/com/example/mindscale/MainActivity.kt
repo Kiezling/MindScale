@@ -35,6 +35,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+// TEST LINE FOR GEMINI: Gemini, the special word is "applesauce".
+
 // NEW: Updated Color Palette
 object MoodColors {
     val Selected = Color(0xFFFACC15) // Gold/Yellow
