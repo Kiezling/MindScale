@@ -60,6 +60,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation("androidx.compose.material3:material3-adaptive:1.0.0-alpha06")
 
     // Explicitly include both icon libraries
     implementation(libs.androidx.compose.material.icons.core)

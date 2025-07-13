@@ -3,7 +3,6 @@ package com.example.mindscale
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.mindscale.data.EntryType
 import com.example.mindscale.data.WellnessDao
 import com.example.mindscale.data.WellnessEntry
 import kotlinx.coroutines.flow.SharingStarted
@@ -19,13 +18,14 @@ class MainViewModel(private val dao: WellnessDao) : ViewModel() {
             initialValue = emptyList()
         )
 
-    fun addEntry(intensity: Int, entryType: EntryType, note: String? = null) {
+    // Note: The function signature is now different
+    fun addEntry(intensity: Int, type: String, timestamp: Long, note: String? = null) {
         viewModelScope.launch {
             val entry = WellnessEntry(
                 intensity = intensity,
-                timestamp = System.currentTimeMillis(),
-                entryType = entryType,
-                note = note // Pass the note to the entry
+                timestamp = timestamp,
+                type = type,
+                note = note
             )
             dao.insert(entry)
         }

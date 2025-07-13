@@ -5,7 +5,8 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [WellnessEntry::class], version = 1, exportSchema = false)
+// UPDATED: Version incremented to 2
+@Database(entities = [WellnessEntry::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun wellnessDao(): WellnessDao
@@ -20,7 +21,10 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "wellness_database"
-                ).build()
+                )
+                    // UPDATED: Added this line to handle future schema changes automatically
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }
