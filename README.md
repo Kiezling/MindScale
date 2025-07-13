@@ -163,3 +163,7 @@ A modal for editing entry notes.
 Must support basic rich text: Bold, Italic, Underline, and ~Strikethrough~.
 
 Must include Undo and Redo functionality.
+
+---
+
+Please use the "JS Reference Code" file to further understand how this project should look and operate.
