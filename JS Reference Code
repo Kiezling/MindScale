@@ -1,0 +1,2215 @@
+import React, { useState, useEffect, useMemo, useReducer, useCallback, useRef } from "react";
+import {
+    LineChart,
+    Line,
+    XAxis,
+    YAxis,
+    Tooltip,
+    ResponsiveContainer,
+    ReferenceLine,
+    Dot,
+} from "recharts";
+import {
+    Moon, Sun, TrendingUp, Edit2, Trash2, ArrowLeft, ChevronLeft,
+    ChevronRight, Calendar as CalendarIcon, Check, X, ChevronDown,
+    FileText, AlertTriangle, Info, Bold, Italic, Underline, Strikethrough,
+    RotateCcw, RotateCw
+} from "lucide-react";
+
+/*
+ * =====================================================================
+ *
+ * PRIME_DIRECTIVE: State-of-the-Art Methodology
+ * DO NOT REMOVE OR EDIT THIS PRIME_DIRECTIVE SECTION
+ *
+ * =====================================================================
+ *
+ * Core Principle: Do not patch; annihilate. If there is an issue, identify
+ * and eliminate the architectural flaw that made the bug possible.
+ * Assume all previous attempts were insufficient. When planning an update
+ * or a fix, anticipate the potential negative impacts and solve for those too.
+ *
+ * =====================================================================
+ *
+ * =====================================================================
+ *
+ * DEV_LOG:
+ *
+ * Attempt 33 (Current):
+ * FEATURE: [Categorical Chart Stability]
+ *
+ * [ANALYSIS] The "Daily Averages" chart failed to render its vertical grid lines.
+ * The root cause was the use of non-unique categorical data for the X-axis
+ * (e.g., 'T' for both Tuesday and Thursday). The charting library could not
+ * resolve the ambiguous positioning for the ReferenceLine components tied to
+ * these non-unique values.
+ *
+ * [SOLUTION] Annihilated the ambiguous data structure. The Daily Averages chart
+ * was re-architected to use the unique `dayIndex` (0-6) as the primary `dataKey`
+ * for its X-axis. A `tickFormatter` function was then implemented to translate
+ * these numerical indices back into their display-friendly day letters ('S', 'M',
+ * 'T', etc.). This ensures each data point and its corresponding grid line has a
+ * unique, unambiguous anchor, making the component's rendering logic robust
+ * and correct by design.
+ *
+ * STATUS: PENDING CONFIRMATION.
+ *
+ * --- OUTSTANDING ISSUES ---
+ * - KOTLIN_TARGET: The application's persistence layer is currently localStorage.
+ * The final Kotlin app must use a robust database like Room.
+ * - KOTLIN_TARGET: Complex business logic (e.g., statistical calculations) lacks
+ * formal unit tests. A comprehensive test suite should be a priority for the
+ * native version.
+ *
+ */
+
+// =====================================================================
+//  CONFIG & CONSTANTS
+// =====================================================================
+const CONFIG = {
+    APP_DATA_KEY: "mindscale-data-v2.7",
+    APP_DATA_VERSION: "2.7.0",
+    MAX_CARRY_MS: 24 * 60 * 60 * 1000, // 24 hours
+    MAX_SLEEP_DURATION_MS: 15 * 60 * 60 * 1000, // 15 hours
+    MAX_SLOPE_MS: 30 * 60 * 1000, // 30 minutes
+    LONG_PRESS_DURATION: 500, // ms
+    LOCAL_STORAGE_DEBOUNCE: 1500, // ms
+    TOAST_DURATION: 3000, // ms
+};
+
+const INTENSITY_COLORS: Record<number, string> = {
+    1: "#E8E8E8", 2: "#D8D8D8", 3: "#C8C8C8", 4: "#B8B8B8", 5: "#A8A8A8",
+    6: "#989898", 7: "#888888", 8: "#787878", 9: "#686868", 10: "#000000",
+};
+
+// =====================================================================
+//  THEME & STYLES
+// =====================================================================
+const THEME = {
+    GOLD: "#ffce00",
+    TURBO: "#ffe000",
+    LGRAY: "#555",
+    DGRAY: "#222",
+    SLEEPWAKE_COLOR: "#36437f",
+    get GOLD_GRAD() { return `linear-gradient(135deg, ${this.TURBO} 0%, ${this.GOLD} 100%)` },
+    get GRAY_GRAD() { return `linear-gradient(135deg, ${this.LGRAY} 0%, ${this.DGRAY} 100%)` },
+};
+
+const STYLES = {
+    SLEEP_BUTTON: { background: "linear-gradient(to bottom right,#555,#222)" },
+    WAKE_BUTTON: { background: "linear-gradient(to bottom right,#ffffff,#e5e5e5)" },
+    GOLD_COLOR: { color: THEME.GOLD },
+    GOLD_GRADIENT: { background: THEME.GOLD_GRAD },
+    GRAY_GRADIENT: { background: THEME.GRAY_GRAD },
+    get BLACK_TEXT_ON_GOLD() { return { ...this.GOLD_GRADIENT, color: "#000" } },
+};
+
+const GlobalStyles = React.memo(() => (
+    <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800&display=swap');
+
+        .calendar-day-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin: 1px; }
+
+        @keyframes flash-invalid-border {
+            0%, 100% { border-color: #d1d5db; } 16.7%, 50%, 83.3% { border-color: #ef4444; } 33.3%, 66.7% { border-color: #d1d5db; }
+        }
+        .flash-invalid { animation: flash-invalid-border 1s ease-in-out; }
+
+        @keyframes toast-in {
+            from { transform: translateY(100%) scale(0.9); opacity: 0; }
+            to { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        @keyframes toast-out {
+            from { transform: translateY(0) scale(1); opacity: 1; }
+            to { transform: translateY(100%) scale(0.9); opacity: 0; }
+        }
+        .toast-enter { animation: toast-in 0.3s ease-out forwards; }
+        .toast-exit { animation: toast-out 0.3s ease-in forwards; }
+    `}</style>
+));
+
+
+// =====================================================================
+//  UTILITY FUNCTIONS & HOOKS
+// =====================================================================
+
+const Utils = {
+    lighten: (hex: string, amt = 0.3) => {
+        const h = hex.replace("#", "");
+        const n = parseInt(h, 16);
+        const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+        const lift = (v: number) => Math.min(255, Math.floor(v + (255 - v) * amt));
+        return `rgb(${lift(r)},${lift(g)},${lift(b)})`;
+    },
+    getIntensityColor: (i: number) => INTENSITY_COLORS[i] ?? "#000",
+    getLabel: (i: number | null) => {
+        if (i === null) return "N/A";
+        return i === 0 ? "None" : i <= 3 ? "Mild" : i <= 6 ? "Moderate" : i <= 9 ? "Severe" : "Critical";
+    },
+    uid: () => {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+            return crypto.randomUUID();
+        }
+        return `${Date.now().toString(36)}-${Math.random().toString(36).substring(2)}`;
+    },
+    localISO: (d: Date) => {
+        if (!d || !(d instanceof Date) || isNaN(d.getTime())) {
+            d = new Date();
+        }
+        const tzOffset = d.getTimezoneOffset() * 60000;
+        const localTime = new Date(d.getTime() - tzOffset);
+        return localTime.toISOString().slice(0, 16);
+    },
+    getCalendarDays: (date: Date) => {
+        const year = date.getFullYear();
+        const month = date.getMonth();
+        const firstDay = new Date(year, month, 1).getDay();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const days: (Date | null)[] = [];
+        for (let i = 0; i < firstDay; i++) { days.push(null); }
+        for (let i = 1; i <= daysInMonth; i++) { days.push(new Date(year, month, i)); }
+        return days;
+    },
+    binaryInsert: (arr: Entry[], item: Entry): Entry[] => {
+        let low = 0, high = arr.length;
+        while (low < high) {
+            const mid = (low + high) >>> 1;
+            if (arr[mid].timestamp < item.timestamp) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        const newArr = [...arr];
+        newArr.splice(low, 0, item);
+        return newArr;
+    },
+    findLastIndex: <T,>(arr: T[], predicate: (value: T, index: number, obj: T[]) => unknown): number => {
+        for (let i = arr.length - 1; i >= 0; i--) {
+            if (predicate(arr[i], i, arr)) {
+                return i;
+            }
+        }
+        return -1;
+    },
+    formatDuration: (ms: number) => {
+        if (isNaN(ms) || ms <= 0) return '0m';
+        const hours = Math.floor(ms / 3600000);
+        const minutes = Math.round((ms % 3600000) / 60000);
+        if (hours === 0 && minutes === 0) return '0m';
+        return `${hours > 0 ? `${hours}h ` : ''}${minutes}m`;
+    },
+};
+
+function useDebounce<T>(value: T, delay: number): T {
+    const [debouncedValue, setDebouncedValue] = useState<T>(value);
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            setDebouncedValue(value);
+        }, delay);
+        return () => {
+            clearTimeout(handler);
+        };
+    }, [value, delay]);
+    return debouncedValue;
+}
+
+// =====================================================================
+//  TYPES & INTERFACES
+// =====================================================================
+type View = "log" | "trends" | "calendar";
+type SleepMode = null | "sleep" | "wake";
+type EntryType = "depression" | "sleep" | "wake";
+type Range = "daily" | "weekly" | "monthly" | "yearly" | "all" | "custom";
+type ImportResolution = 'overwrite' | 'keep';
+type ToastType = 'success' | 'error' | 'info';
+
+interface ToastMessage {
+    id: string;
+    message: string;
+    type: ToastType;
+}
+
+interface Entry {
+    id: string;
+    intensity: number | null;
+    timestamp: number;
+    type: EntryType;
+    notes?: string;
+}
+
+interface SleepCycle {
+    sleepTime: number;
+    wakeTime: number;
+    duration: number;
+}
+
+interface ChartPoint extends Partial<Entry> {
+    timestamp: number;
+    intensity: number | null;
+    isEntry: boolean;
+}
+
+interface Segment {
+  start: number;
+  end:   number;
+  v0:    number;
+  v1:    number;
+}
+
+interface ImportConflict {
+    conflictingEntries: { existing: Entry; imported: Entry }[];
+    allImportedEntries: Entry[];
+}
+
+interface AppState {
+    entries: Entry[];
+    entriesByDay: Map<string, Entry[]>;
+    entryMinutes: Map<number, string>;
+    view: View;
+    sleepMode: SleepMode;
+    editId: string | null;
+    editingNoteId: string | null;
+    pendingOverwrite: Entry | null;
+    duplicateEntry: Entry | null;
+    importConflict: ImportConflict | null;
+    trendsRange: Range;
+    trendsCustomRange: { start: Date, end: Date };
+    trendsCurrentDate: Date;
+    calendarDate: Date;
+    calendarListStartDate: Date;
+    toasts: ToastMessage[];
+}
+
+type AppAction =
+    | { type: 'LOAD_ENTRIES'; payload: Entry[] }
+    | { type: 'SET_VIEW'; payload: View }
+    | { type: 'SET_SLEEP_MODE'; payload: SleepMode }
+    | { type: 'ADD_ENTRY'; payload: Entry }
+    | { type: 'UPDATE_ENTRY'; payload: { id: string; intensity: number | null; timestamp: number; type: EntryType } }
+    | { type: 'CONFIRM_OVERWRITE' }
+    | { type: 'CANCEL_OVERWRITE' }
+    | { type: 'DELETE_ENTRY'; payload: string }
+    | { type: 'SET_EDIT_ID'; payload: string | null }
+    | { type: 'SET_EDITING_NOTE_ID', payload: string | null }
+    | { type: 'UPDATE_NOTE', payload: { id: string; notes: string } }
+    | { type: 'SET_CALENDAR_DATE'; payload: Date }
+    | { type: 'SET_CALENDAR_LIST_START_DATE'; payload: Date }
+    | { type: 'SET_TRENDS_RANGE'; payload: Range }
+    | { type: 'SET_TRENDS_CUSTOM_RANGE'; payload: { start: Date, end: Date } }
+    | { type: 'SET_TRENDS_CURRENT_DATE'; payload: Date }
+    | { type: 'SET_IMPORT_CONFLICT'; payload: ImportConflict | null }
+    | { type: 'RESOLVE_IMPORT_CONFLICT'; payload: ImportResolution }
+    | { type: 'ADD_TOAST'; payload: { message: string, type: ToastType } }
+    | { type: 'REMOVE_TOAST'; payload: string };
+
+// =====================================================================
+//  STATE MANAGEMENT (REDUCER)
+// =====================================================================
+function regenerateDerivedEntryData(entries: Entry[]) {
+    const entriesByDay = new Map<string, Entry[]>();
+    const entryMinutes = new Map<number, string>();
+    for (const entry of entries) {
+        const dateKey = new Date(entry.timestamp).toDateString();
+        const dayEntries = entriesByDay.get(dateKey) || [];
+        entriesByDay.set(dateKey, [...dayEntries, entry]);
+
+        const minuteKey = Math.floor(entry.timestamp / 60000);
+        entryMinutes.set(minuteKey, entry.id);
+    }
+    return { entriesByDay, entryMinutes };
+}
+
+const defaultCustomRange = { start: new Date(), end: new Date() };
+const initialState: AppState = {
+    entries: [],
+    entriesByDay: new Map(),
+    entryMinutes: new Map(),
+    view: 'log',
+    sleepMode: null,
+    editId: null,
+    editingNoteId: null,
+    pendingOverwrite: null,
+    duplicateEntry: null,
+    importConflict: null,
+    trendsRange: 'daily',
+    trendsCustomRange: defaultCustomRange,
+    trendsCurrentDate: new Date(),
+    calendarDate: new Date(),
+    calendarListStartDate: new Date(),
+    toasts: [],
+};
+
+function appReducer(state: AppState, action: AppAction): AppState {
+    switch (action.type) {
+        case 'LOAD_ENTRIES': {
+            const entries = action.payload;
+            const { entriesByDay, entryMinutes } = regenerateDerivedEntryData(entries);
+            return { ...state, entries, entriesByDay, entryMinutes };
+        }
+        case 'ADD_ENTRY': {
+            const newEntry = action.payload;
+            const minuteKey = Math.floor(newEntry.timestamp / 60000);
+
+            if (state.entryMinutes.has(minuteKey)) {
+                const dupId = state.entryMinutes.get(minuteKey)!;
+                const dup = state.entries.find(e => e.id === dupId);
+                if (dup) return { ...state, pendingOverwrite: newEntry, duplicateEntry: dup };
+            }
+
+            const newEntries = Utils.binaryInsert(state.entries, newEntry);
+            const { entriesByDay, entryMinutes } = regenerateDerivedEntryData(newEntries);
+
+            return { ...state, entries: newEntries, entriesByDay, entryMinutes, sleepMode: null };
+        }
+        case 'UPDATE_ENTRY': {
+            const { id, intensity, timestamp, type } = action.payload;
+            const minuteKey = Math.floor(timestamp / 60000);
+
+            if (state.entryMinutes.has(minuteKey) && state.entryMinutes.get(minuteKey) !== id) {
+                const dupId = state.entryMinutes.get(minuteKey)!;
+                const dup = state.entries.find(e => e.id === dupId);
+                const originalEntry = state.entries.find(e => e.id === id)!;
+                const updatedEntry = { ...originalEntry, intensity, timestamp, type };
+                if (dup) return { ...state, pendingOverwrite: updatedEntry, duplicateEntry: dup, editId: null };
+            }
+
+            const oldEntry = state.entries.find(e => e.id === id);
+            if (!oldEntry) return state;
+
+            const updatedEntry = { ...oldEntry, intensity, timestamp, type };
+            const filteredEntries = state.entries.filter(e => e.id !== id);
+            const newEntries = Utils.binaryInsert(filteredEntries, updatedEntry);
+            const { entriesByDay, entryMinutes } = regenerateDerivedEntryData(newEntries);
+            return { ...state, entries: newEntries, entriesByDay, entryMinutes, editId: null };
+        }
+        case 'CONFIRM_OVERWRITE': {
+            if (!state.pendingOverwrite || !state.duplicateEntry) return state;
+            const { pendingOverwrite, duplicateEntry } = state;
+            const idsToRemove = new Set([pendingOverwrite.id, duplicateEntry.id]);
+
+            let tempEntries = state.entries.filter(e => !idsToRemove.has(e.id));
+            tempEntries = Utils.binaryInsert(tempEntries, pendingOverwrite);
+
+            const { entriesByDay, entryMinutes } = regenerateDerivedEntryData(tempEntries);
+            return {
+                ...state,
+                entries: tempEntries,
+                entriesByDay,
+                entryMinutes,
+                pendingOverwrite: null,
+                duplicateEntry: null,
+                editId: null,
+                sleepMode: null,
+            };
+        }
+        case 'DELETE_ENTRY': {
+            const newEntries = state.entries.filter(e => e.id !== action.payload);
+            const { entriesByDay, entryMinutes } = regenerateDerivedEntryData(newEntries);
+            return { ...state, entries: newEntries, entriesByDay, entryMinutes };
+        }
+        case 'UPDATE_NOTE': {
+            const { id, notes } = action.payload;
+            const newEntries = state.entries.map(e => e.id === id ? { ...e, notes } : e);
+            return { ...state, entries: newEntries, editingNoteId: null };
+        }
+        case 'RESOLVE_IMPORT_CONFLICT': {
+            if (!state.importConflict) return state;
+
+            const { allImportedEntries, conflictingEntries } = state.importConflict;
+            const resolution = action.payload;
+
+            let finalEntries = [...state.entries];
+            const existingConflictTimestamps = new Set(conflictingEntries.map(c => c.existing.timestamp));
+
+            if (resolution === 'overwrite') {
+                finalEntries = finalEntries.filter(e => !existingConflictTimestamps.has(e.timestamp));
+            }
+
+            const importedToAdd = allImportedEntries.filter(imported => {
+                const minuteKey = Math.floor(imported.timestamp / 60000);
+                const existingId = state.entryMinutes.get(minuteKey);
+
+                if (resolution === 'overwrite') return true;
+                return !existingId;
+            });
+
+            let combined = [...finalEntries, ...importedToAdd];
+            const seen = new Map<number, Entry>();
+            for (const entry of combined) {
+                const minuteKey = Math.floor(entry.timestamp / 60000);
+                if (!seen.has(minuteKey) || (entry.notes && entry.notes.length > 0)) {
+                    seen.set(minuteKey, entry);
+                }
+            }
+
+            const newEntries = Array.from(seen.values()).sort((a,b) => a.timestamp - b.timestamp);
+            const { entriesByDay, entryMinutes } = regenerateDerivedEntryData(newEntries);
+
+            return { ...state, entries: newEntries, entriesByDay, entryMinutes, importConflict: null };
+        }
+        case 'ADD_TOAST': {
+            const newToast: ToastMessage = { id: Utils.uid(), ...action.payload };
+            return { ...state, toasts: [...state.toasts, newToast] };
+        }
+        case 'REMOVE_TOAST':
+            return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
+
+        // --- Simple State Setters ---
+        case 'SET_VIEW': return { ...state, view: action.payload };
+        case 'SET_SLEEP_MODE': return { ...state, sleepMode: state.sleepMode === action.payload ? null : action.payload };
+        case 'CANCEL_OVERWRITE': return { ...state, pendingOverwrite: null, duplicateEntry: null };
+        case 'SET_EDIT_ID': return { ...state, editId: action.payload, editingNoteId: null };
+        case 'SET_EDITING_NOTE_ID': return { ...state, editingNoteId: action.payload, editId: null };
+        case 'SET_CALENDAR_DATE': return { ...state, calendarDate: action.payload };
+        case 'SET_CALENDAR_LIST_START_DATE': return { ...state, calendarListStartDate: action.payload, editId: null };
+        case 'SET_TRENDS_RANGE': return { ...state, trendsRange: action.payload };
+        case 'SET_TRENDS_CUSTOM_RANGE': return { ...state, trendsCustomRange: action.payload };
+        case 'SET_TRENDS_CURRENT_DATE': return { ...state, trendsCurrentDate: action.payload };
+        case 'SET_IMPORT_CONFLICT': return { ...state, importConflict: action.payload };
+        default: return state;
+    }
+}
+
+
+// =====================================================================
+//  STATISTICAL CALCULATION ENGINE
+// =====================================================================
+const CalculationEngine = {
+    buildCalculationPoints: (entries: Entry[]): (ChartPoint & { isBreak: boolean })[] => {
+        return entries
+            .map(e => {
+                if (e.type === 'sleep') {
+                    return { ...e, timestamp: e.timestamp, intensity: e.intensity ?? 0, isBreak: true, isEntry: true };
+                }
+                if (e.type === 'wake') {
+                     return { ...e, timestamp: e.timestamp, intensity: e.intensity ?? 0, isBreak: false, isEntry: true };
+                }
+                if (e.type === 'depression' && e.intensity !== null) {
+                    return { ...e, timestamp: e.timestamp, intensity: e.intensity, isBreak: false, isEntry: true };
+                }
+                return null;
+            })
+            .filter((p): p is (ChartPoint & { isBreak: boolean }) => p !== null)
+            .sort((a, b) => a.timestamp - b.timestamp);
+    },
+
+    injectSyntheticBreaks: (points: (ChartPoint & { isBreak: boolean })[]): (ChartPoint & { isBreak: boolean })[] => {
+        const events: (ChartPoint & { isBreak: boolean; isSynthetic?: boolean })[] = [];
+        if (points.length === 0) return events;
+        const now = new Date().getTime();
+        for (let i = 0; i < points.length; i++) {
+            const current = points[i];
+            events.push(current);
+
+            if (current.isBreak || current.timestamp > now) continue;
+
+            const next = points[i + 1];
+            const breakTimestamp = Math.min(current.timestamp + CONFIG.MAX_CARRY_MS, now);
+            if (next) {
+                if (next.timestamp - current.timestamp > CONFIG.MAX_CARRY_MS) {
+                    if (breakTimestamp < next.timestamp) {
+                        events.push({ timestamp: breakTimestamp, intensity: current.intensity, isBreak: true, isSynthetic: true, isEntry: false });
+                    }
+                }
+            } else {
+                events.push({ timestamp: breakTimestamp, intensity: current.intensity, isBreak: true, isSynthetic: true, isEntry: false });
+            }
+        }
+        return events;
+    },
+
+    buildLineSegments: (allEntries: Entry[], chartRange: { start: Date, end: Date }): Segment[] => {
+        const allCalcPoints = CalculationEngine.buildCalculationPoints(allEntries);
+        if (allCalcPoints.length === 0) return [];
+
+        const events = CalculationEngine.injectSyntheticBreaks(allCalcPoints);
+
+        const segments: Segment[] = [];
+        const rangeStartTime = chartRange.start.getTime();
+
+        const lastEventBeforeIndex = Utils.findLastIndex(events, p => p.timestamp < rangeStartTime);
+        let startIndex = 0;
+        if (lastEventBeforeIndex !== -1) {
+            startIndex = events[lastEventBeforeIndex].isBreak ? lastEventBeforeIndex + 1 : lastEventBeforeIndex;
+        }
+
+        if (startIndex >= events.length) return [];
+        for (let i = startIndex; i < events.length; i++) {
+            const current = events[i];
+            if (current.isBreak) continue;
+
+            const next = events[i + 1];
+            if (!next) break;
+            if (next.isBreak) {
+                segments.push({ start: current.timestamp, end: next.timestamp, v0: current.intensity!, v1: current.intensity! });
+                continue;
+            }
+
+            const gap = next.timestamp - current.timestamp;
+            if (current.intensity === next.intensity) {
+                segments.push({ start: current.timestamp, end: next.timestamp, v0: current.intensity!, v1: next.intensity! });
+            } else {
+                const slopeDuration = Math.min(CONFIG.MAX_SLOPE_MS, gap);
+                const slopeStartTime = next.timestamp - slopeDuration;
+
+                if (slopeStartTime > current.timestamp) {
+                    segments.push({ start: current.timestamp, end: slopeStartTime, v0: current.intensity!, v1: current.intensity! });
+                }
+                segments.push({ start: slopeStartTime, end: next.timestamp, v0: current.intensity!, v1: next.intensity! });
+            }
+        }
+        return segments;
+    },
+
+    generateLineChartData: (segments: Segment[], range: { start: Date, end: Date }): ChartPoint[] => {
+        if (segments.length === 0) return [];
+        const lineData: ChartPoint[] = [];
+        const rangeStart = range.start.getTime();
+        const rangeEnd = range.end.getTime();
+        const getIntensityAt = (seg: Segment, t: number) => {
+            if (seg.end === seg.start || seg.v0 === seg.v1) return seg.v0;
+            const ratio = (t - seg.start) / (seg.end - seg.start);
+            return seg.v0 + (seg.v1 - seg.v0) * ratio;
+        };
+        segments.forEach((seg, index) => {
+            const visibleStart = Math.max(seg.start, rangeStart);
+            const visibleEnd = Math.min(seg.end, rangeEnd);
+
+            if (visibleEnd > visibleStart) {
+                lineData.push({ timestamp: visibleStart, intensity: getIntensityAt(seg, visibleStart), isEntry: false });
+                lineData.push({ timestamp: visibleEnd, intensity: getIntensityAt(seg, visibleEnd), isEntry: false });
+            }
+
+            const nextSeg = segments[index + 1];
+            if (nextSeg && nextSeg.start > seg.end) {
+                if (seg.end >= rangeStart && seg.end <= rangeEnd) {
+                     lineData.push({ timestamp: seg.end + 1, intensity: null, isEntry: false });
+                }
+            }
+        });
+        return lineData.sort((a, b) => a.timestamp - b.timestamp);
+    },
+
+    calculateTimeWeightedAverage: (segments: Segment[], periodStart: number, periodEnd: number): { average: number | null } => {
+        const totalPeriodDuration = periodEnd - periodStart;
+        if (totalPeriodDuration <= 0) return { average: null };
+
+        let totalArea = 0;
+        for (const seg of segments) {
+            const overlapStart = Math.max(periodStart, seg.start);
+            const overlapEnd = Math.min(periodEnd, seg.end);
+
+            if (overlapEnd > overlapStart) {
+                const overlapDuration = overlapEnd - overlapStart;
+                const getIntensityAt = (t: number) => {
+                    if (seg.end === seg.start || seg.v0 === seg.v1) return seg.v0;
+                    return seg.v0 + (seg.v1 - seg.v0) * ((t - seg.start) / (seg.end - seg.start));
+                };
+                const v_start = getIntensityAt(overlapStart);
+                const v_end = getIntensityAt(overlapEnd);
+                const area = ((v_start + v_end) / 2) * overlapDuration;
+                totalArea += area;
+            }
+        }
+        const average = totalArea / totalPeriodDuration;
+        return { average: isNaN(average) ? 0 : average };
+    },
+
+    calculateConfirmedSleepCycles: (entries: Entry[]): SleepCycle[] => {
+        const sleepWakeEvents = entries
+            .filter(e => e.type === 'sleep' || e.type === 'wake')
+            .sort((a, b) => a.timestamp - b.timestamp);
+
+        const cycles: SleepCycle[] = [];
+        for (let i = 0; i < sleepWakeEvents.length - 1; i++) {
+            const currentEvent = sleepWakeEvents[i];
+            const nextEvent = sleepWakeEvents[i + 1];
+            if (currentEvent.type === 'sleep' && nextEvent.type === 'wake') {
+                const duration = nextEvent.timestamp - currentEvent.timestamp;
+                if (duration > 0 && duration <= CONFIG.MAX_SLEEP_DURATION_MS) {
+                    cycles.push({ sleepTime: currentEvent.timestamp, wakeTime: nextEvent.timestamp, duration: duration });
+                }
+            }
+        }
+        return cycles;
+    },
+};
+
+
+// =====================================================================
+//  LEAF & UI COMPONENTS
+// =====================================================================
+
+const OverwriteModal = React.memo(({ entry, onConfirm, onCancel }: { entry: Entry, onConfirm: () => void, onCancel: () => void }) => {
+    const grad = entry.intensity === 0 ? THEME.GOLD_GRAD : `linear-gradient(45deg,${Utils.lighten(Utils.getIntensityColor(entry.intensity!))},${Utils.getIntensityColor(entry.intensity!)})`;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex justify-center items-center z-50 p-4">
+            <div className="bg-white p-6 rounded-xl shadow-xl space-y-4 text-center max-w-xs">
+                <p className="font-medium">An entry already exists for this time. Overwrite?</p>
+                <div className="bg-gray-100 p-3 rounded-lg text-left">
+                    <div className="flex items-center gap-2 text-sm text-black">
+                        <span className="w-7 h-7 flex items-center justify-center rounded font-bold" style={{ background: grad, color: entry.intensity != null && entry.intensity >= 7 ? 'white' : 'black' }}>{entry.intensity}</span>
+                        <div className="flex flex-col">
+                            <span className="font-semibold">{entry.type === 'sleep' ? 'Sleep' : entry.type === 'wake' ? 'Wake' : Utils.getLabel(entry.intensity)}</span>
+                            <span className="text-gray-600 text-xs">{new Date(entry.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span>
+                        </div>
+                    </div>
+                 </div>
+                <div className="flex gap-3">
+                    <button className="flex-1 py-2 rounded-lg bg-gray-200" onClick={onCancel}>Cancel</button>
+                    <button className="flex-1 py-2 rounded-lg" style={STYLES.BLACK_TEXT_ON_GOLD} onClick={onConfirm}>Overwrite</button>
+                </div>
+             </div>
+        </div>
+    );
+});
+
+const ImportConflictModal = React.memo(({ conflict, onResolve, onCancel }: { conflict: ImportConflict, onResolve: (res: ImportResolution) => void, onCancel: () => void }) => {
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4">
+            <div className="bg-white p-6 rounded-xl shadow-2xl space-y-4 max-w-md w-full">
+                <div className="flex justify-between items-center">
+                    <span className="w-8" />
+                    <h2 className="text-xl font-bold flex items-center gap-2"><AlertTriangle className="text-amber-500" /> Import Conflict</h2>
+                    <button onClick={onCancel} className="p-1 rounded-full hover:bg-gray-200" aria-label="Close conflict modal"><X size={20} /></button>
+                </div>
+                <p className="text-sm text-gray-700 text-center">
+                    Your import file contains {conflict.conflictingEntries.length} entr{conflict.conflictingEntries.length > 1 ? 'ies' : 'y'} with the same date and time as existing entries.
+                </p>
+                <div className="max-h-40 overflow-y-auto space-y-2 p-2 bg-gray-50 rounded-lg border">
+                    {conflict.conflictingEntries.map(({ existing, imported }, index) => (
+                        <div key={index} className="text-xs">
+                            <p className="font-semibold">{new Date(existing.timestamp).toLocaleString()}</p>
+                            <div className="grid grid-cols-2 gap-2">
+                                <p><strong>Existing:</strong> {Utils.getLabel(existing.intensity)} ({existing.intensity})</p>
+                                <p><strong>Imported:</strong> {Utils.getLabel(imported.intensity)} ({imported.intensity})</p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                <p className="text-sm text-gray-700 text-center">How would you like to resolve this?</p>
+                <div className="flex flex-col sm:flex-row gap-3">
+                    <button className="flex-1 py-2 rounded-lg text-black font-semibold" style={STYLES.GOLD_GRADIENT} onClick={() => onResolve('overwrite')}>Overwrite Existing</button>
+                    <button className="flex-1 py-2 rounded-lg text-white font-semibold" style={STYLES.GRAY_GRADIENT} onClick={() => onResolve('keep')}>Keep Existing</button>
+                </div>
+            </div>
+        </div>
+    );
+});
+
+const Legend = React.memo(() => {
+    const legendItems = useMemo(() => [
+        { label: "None", color: THEME.GOLD_GRAD },
+        { label: "Mild", color: `linear-gradient(45deg,${Utils.lighten(Utils.getIntensityColor(2))},${Utils.getIntensityColor(2)})` },
+        { label: "Moderate", color: `linear-gradient(45deg,${Utils.lighten(Utils.getIntensityColor(5))},${Utils.getIntensityColor(5)})` },
+        { label: "Severe", color: `linear-gradient(45deg,${Utils.lighten(Utils.getIntensityColor(8))},${Utils.getIntensityColor(8)})` },
+        { label: "Critical", color: Utils.getIntensityColor(10) }
+    ], []);
+    return (
+        <div className="p-2 border border-black/10 rounded-lg">
+            <div className="flex flex-wrap justify-center items-center gap-x-3 gap-y-1 text-xs text-gray-700">
+                {legendItems.map(item => (
+                    <div key={item.label} className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full block flex-shrink-0" style={{ background: item.color }}></span>
+                        <span className="whitespace-nowrap">{item.label}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+});
+
+const NumberPad = React.memo(({ onAdd, onCustomAddStart }: { onAdd: (i: number) => void, onCustomAddStart: (i: number) => void }) => {
+    const timerRef = useRef<number | null>(null);
+
+    const handlePressStart = useCallback((i: number) => {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        timerRef.current = window.setTimeout(() => onCustomAddStart(i), CONFIG.LONG_PRESS_DURATION);
+    }, [onCustomAddStart]);
+
+    const cancelPress = useCallback(() => {
+        if (timerRef.current) clearTimeout(timerRef.current);
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (timerRef.current) clearTimeout(timerRef.current);
+         };
+    }, []);
+
+    const buttons = useMemo(() => [[0], [1, 2, 3], [4, 5, 6], [7, 8, 9], [10]], []);
+
+    return (
+        <div className="p-1 rounded-lg bg-white">
+            <div className="space-y-1">
+                {buttons.map((row) => (
+                    <div key={row.join("-")} className="flex justify-center gap-1">
+                        {row.map((i) => {
+                            const base = Utils.getIntensityColor(i);
+                            const grad = i === 0 ? THEME.GOLD_GRAD : `linear-gradient(45deg,${Utils.lighten(base, 0.35)},${base})`;
+                            return (
+                                <button
+                                    key={i}
+                                    onClick={() => onAdd(i)}
+                                    onPointerDown={() => handlePressStart(i)}
+                                    onPointerUp={cancelPress}
+                                    onPointerLeave={cancelPress}
+                                    className="w-12 h-12 rounded-lg font-bold shadow flex items-center justify-center text-white"
+                                    style={{ background: grad, color: i === 0 ? 'black' : 'white', fontSize: '1.1rem' }}
+                                    aria-label={`Add entry with intensity ${i}`}
+                                >
+                                    {i}
+                                </button>
+                            );
+                        })}
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+});
+
+const EntryItem = React.memo(({ entry, editId, dispatch }: { entry: Entry, editId: string | null, dispatch: React.Dispatch<AppAction> }) => {
+    const [editIntensity, setEditIntensity] = useState<number | string>(entry.intensity ?? '');
+    const [editTimestamp, setEditTimestamp] = useState(Utils.localISO(new Date(entry.timestamp)));
+    const [editType, setEditType] = useState<EntryType>(entry.type);
+    const [isFlashing, setFlashing] = useState(false);
+
+    useEffect(() => {
+        if (editId === entry.id) {
+            setEditIntensity(entry.intensity ?? '');
+            setEditTimestamp(Utils.localISO(new Date(entry.timestamp)));
+            setEditType(entry.type);
+        }
+    }, [editId, entry.id, entry.intensity, entry.timestamp, entry.type]);
+
+    const handleSaveEdit = useCallback(() => {
+        const newDate = new Date(editTimestamp);
+        const intensityStr = editIntensity.toString();
+        const intensityNum = intensityStr === '' ? null : parseInt(intensityStr, 10);
+
+        if (isNaN(newDate.getTime()) || (intensityNum !== null && (isNaN(intensityNum) || intensityNum < 0 || intensityNum > 10))) {
+            setFlashing(true);
+            setTimeout(() => setFlashing(false), 1000);
+            return;
+        }
+        dispatch({ type: 'UPDATE_ENTRY', payload: { id: entry.id, intensity: intensityNum, timestamp: newDate.getTime(), type: editType } });
+    }, [dispatch, entry.id, editIntensity, editTimestamp, editType]);
+
+    const renderIntensityBadge = () => {
+        const { intensity } = entry;
+        if (intensity === null) {
+            return <span className="w-6 h-6 flex items-center justify-center rounded bg-gray-400" />;
+        }
+        const isZero = intensity === 0;
+        const grad = isZero ? THEME.GOLD_GRAD : `linear-gradient(45deg,${Utils.lighten(Utils.getIntensityColor(intensity))},${Utils.getIntensityColor(intensity)})`;
+        const color = isZero ? 'black' : (intensity >= 7 ? 'white' : 'black');
+        return (
+            <span className="w-6 h-6 flex items-center justify-center rounded font-bold z-10 flex-shrink-0" style={{ background: grad, color }}>
+                {intensity}
+            </span>
+        );
+    }
+
+    return (
+        <div className="flex flex-col">
+            <div className="flex items-center justify-between p-2 rounded-lg bg-gray-50/50">
+                {editId === entry.id ? (
+                    <div className="flex items-center gap-1.5 w-full">
+                        <input type="text" inputMode="numeric" value={editIntensity} onChange={e => { const val = e.target.value; if (val === "" || (/^\d+$/.test(val) && +val >= 0 && +val <= 10)) { setEditIntensity(val); } }} className="w-10 border border-gray-300 rounded p-1 text-xs text-center" />
+                        <input type="datetime-local" value={editTimestamp} onChange={e => setEditTimestamp(e.target.value)} className={`flex-grow border rounded p-1 text-xs ${isFlashing ? 'flash-invalid' : 'border-gray-300'}`} />
+                        <button onClick={() => setEditType(prev => prev === 'sleep' ? 'depression' : 'sleep')} className={`w-7 h-7 flex items-center justify-center rounded-lg bg-white border-2 ${editType === 'sleep' ? 'border-amber-400' : 'border-gray-400'}`} aria-label="Toggle sleep type"><Moon size={14} className="text-black" /></button>
+                        <button onClick={() => setEditType(prev => prev === 'wake' ? 'depression' : 'wake')} className={`w-7 h-7 flex items-center justify-center rounded-lg bg-white border-2 ${editType === 'wake' ? 'border-amber-400' : 'border-gray-400'}`} aria-label="Toggle wake type"><Sun size={14} className="text-black" /></button>
+                        <button onClick={handleSaveEdit} className="w-7 h-7 flex items-center justify-center rounded-lg text-black" style={STYLES.GOLD_GRADIENT} aria-label="Save edit"><Check size={16} /></button>
+                        <button onClick={() => dispatch({ type: 'SET_EDIT_ID', payload: null })} className="w-7 h-7 flex items-center justify-center rounded-lg text-white" style={STYLES.SLEEP_BUTTON} aria-label="Cancel edit"><X size={16} /></button>
+                     </div>
+                ) : (
+                    <>
+                        <div className="flex items-center gap-2 flex-1 text-xs text-black overflow-hidden">
+                            {renderIntensityBadge()}
+                            {entry.type === 'sleep' && <Moon size={14} className="text-black flex-shrink-0" />}
+                            {entry.type === 'wake' && <Sun size={14} className="text-black flex-shrink-0" />}
+                            <span className="font-medium truncate">
+                                {Utils.getLabel(entry.intensity)}
+                            </span>
+                            <span className="text-gray-600 ml-auto flex-shrink-0">{new Date(entry.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span>
+                         </div>
+                        <div className="flex gap-1 ml-2">
+                            <button onClick={() => dispatch({ type: 'SET_EDITING_NOTE_ID', payload: entry.id })} className="text-gray-500 hover:text-amber-500 p-1" aria-label="Edit note"><FileText size={12} /></button>
+                            <button onClick={() => dispatch({ type: 'SET_EDIT_ID', payload: entry.id })} className="text-gray-500 hover:text-amber-500 p-1" aria-label="Edit entry"><Edit2 size={12} /></button>
+                            <button onClick={() => dispatch({ type: 'DELETE_ENTRY', payload: entry.id })} className="text-gray-500 hover:text-red-600 p-1" aria-label="Delete entry"><Trash2 size={12} /></button>
+                        </div>
+                     </>
+                )}
+            </div>
+            {entry.notes && editId !== entry.id && (
+                <div className="text-xs text-gray-700 px-4 pb-1 border-x border-b border-gray-200 rounded-b-lg -mt-2 pt-3 ml-3 mr-3 bg-white">
+                    <div className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: entry.notes }} />
+                </div>
+            )}
+        </div>
+    );
+});
+
+// =====================================================================
+//  VIEW COMPONENTS
+// =====================================================================
+
+function LogView({ state, dispatch }: { state: AppState, dispatch: React.Dispatch<AppAction> }) {
+    const { entries, sleepMode } = state;
+    const [customMode, setCustomMode] = useState<number | null>(null);
+    const [customDT, setCustomDT] = useState("");
+    const [isFlashing, setFlashing] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const showToast = useCallback((message: string, type: ToastType = 'info') => {
+        dispatch({ type: 'ADD_TOAST', payload: { message, type } });
+    }, [dispatch]);
+
+    const handleAddEntry = useCallback((intensity: number) => {
+        const newEntry: Entry = {
+            id: Utils.uid(),
+            intensity: sleepMode === 'wake' ? 0 : intensity,
+            timestamp: new Date().getTime(),
+            type: sleepMode ?? 'depression',
+            notes: ''
+        };
+        dispatch({ type: 'ADD_ENTRY', payload: newEntry });
+    }, [dispatch, sleepMode]);
+
+    const handleCustomAddStart = useCallback((intensity: number) => {
+        setCustomMode(intensity);
+        setCustomDT(Utils.localISO(new Date()));
+    }, []);
+
+    const handleCustomAddConfirm = useCallback(() => {
+        if (customMode === null) return;
+        const newDate = new Date(customDT);
+        if (isNaN(newDate.getTime())) {
+            setFlashing(true);
+            setTimeout(() => setFlashing(false), 1000);
+            return;
+        }
+        const newEntry: Entry = {
+            id: Utils.uid(),
+            intensity: sleepMode === 'wake' ? 0 : customMode,
+            timestamp: newDate.getTime(),
+            type: sleepMode ?? 'depression',
+            notes: ''
+        };
+        dispatch({ type: 'ADD_ENTRY', payload: newEntry });
+        setCustomMode(null);
+        setCustomDT("");
+    }, [customDT, customMode, dispatch, sleepMode]);
+
+    const handleExport = useCallback(() => {
+        if (entries.length === 0) {
+            showToast("No entries to export.", "error");
+            return;
+        }
+        const now = new Date();
+        const date = now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '-');
+        const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }).replace(/:/g, '');
+        const filename = `MindScale Entries ${date} ${time}.json`;
+
+        const dataStr = JSON.stringify({ version: CONFIG.APP_DATA_VERSION, entries: entries }, null, 2);
+        const dataBlob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement("a");
+        link.download = filename;
+        link.href = url;
+        link.click();
+        URL.revokeObjectURL(url);
+        showToast("Entries exported successfully!", "success");
+    }, [entries, showToast]);
+
+    const handleImportClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target?.result;
+                if (typeof text !== 'string') throw new Error("File is not readable");
+                const data = JSON.parse(text);
+
+                if (!data || !Array.isArray(data.entries)) {
+                    throw new Error("Invalid file format.");
+                }
+
+                const importedEntries: Entry[] = data.entries.filter((entry: any) =>
+                    typeof entry.id === 'string' &&
+                    typeof entry.timestamp === 'number' &&
+                    typeof entry.type === 'string'
+                );
+
+                if (importedEntries.length === 0) {
+                    showToast("No valid entries found in file.", "error");
+                    return;
+                }
+
+                const conflictingEntries: { existing: Entry; imported: Entry }[] = [];
+                const nonConflictingImported: Entry[] = [];
+
+                const existingEntriesMap = new Map<number, Entry>();
+                entries.forEach(e => existingEntriesMap.set(Math.floor(e.timestamp / 60000), e));
+
+                for (const imported of importedEntries) {
+                    const minuteKey = Math.floor(imported.timestamp / 60000);
+                    const existing = existingEntriesMap.get(minuteKey);
+                    if (existing) {
+                        conflictingEntries.push({ existing, imported });
+                    } else {
+                        nonConflictingImported.push(imported);
+                    }
+                }
+
+                if (conflictingEntries.length > 0) {
+                    dispatch({
+                        type: 'SET_IMPORT_CONFLICT',
+                        payload: { conflictingEntries, allImportedEntries: importedEntries }
+                    });
+                } else {
+                    const combined = [...entries, ...nonConflictingImported].sort((a,b) => a.timestamp - b.timestamp);
+                    dispatch({ type: 'LOAD_ENTRIES', payload: combined });
+                    showToast(`Imported ${nonConflictingImported.length} new entries.`, "success");
+                }
+
+            } catch (error) {
+                const message = error instanceof Error ? error.message : "Unknown error";
+                showToast(`Import Error: ${message}`, "error");
+            } finally {
+                if(event.target) event.target.value = '';
+            }
+        };
+        reader.readAsText(file);
+    };
+
+    const recentEntries = useMemo(() => entries.slice(-50).reverse(), [entries]);
+
+    return (
+        <div className="p-4 pt-8 max-w-md mx-auto flex flex-col space-y-4">
+            <header className="text-center">
+                <h1 className="text-4xl font-extrabold uppercase bg-gradient-to-br from-black to-gray-400 bg-clip-text text-transparent">MINDSCALE</h1>
+            </header>
+            <p className="text-gray-600 text-sm text-center pb-2">Track depression, anxiety, stress, etc.</p>
+
+            {customMode !== null && (<div className="text-center flex flex-col items-center space-y-2 my-4"><input type="datetime-local" value={customDT} onChange={(e) => setCustomDT(e.target.value)} autoFocus className={`border rounded p-2 text-sm ${isFlashing ? 'flash-invalid' : 'border-gray-300'}`}/><div className="flex gap-2"><button onClick={handleCustomAddConfirm} className="px-3 py-2 rounded text-sm text-black" style={STYLES.BLACK_TEXT_ON_GOLD}>Done</button><button onClick={() => { setCustomMode(null); setCustomDT(""); }} className="px-3 py-2 bg-gray-300 rounded text-sm">Cancel</button></div></div>)}
+
+            <Legend />
+            <p className="text-center italic text-xs text-gray-500">Long-press a number to add an entry with a custom time</p>
+            <div className="w-fit mx-auto">
+                 <div className={`rounded-xl transition-all ${sleepMode !== null ? 'p-[2px]' : 'p-0'}`} style={sleepMode !== null ? STYLES.GOLD_GRADIENT : {}}>
+                    <NumberPad onAdd={handleAddEntry} onCustomAddStart={handleCustomAddStart} />
+                </div>
+            </div>
+
+            <div className="flex justify-center gap-4 items-center">
+                <div className={`rounded-lg transition-all ${sleepMode === 'sleep' ? 'p-[2px]' : 'p-0'}`} style={sleepMode === 'sleep' ? STYLES.GOLD_GRADIENT : {}}>
+                    <button onClick={() => dispatch({ type: 'SET_SLEEP_MODE', payload: 'sleep' })} className={`w-full px-6 py-2 rounded-md flex items-center justify-center gap-2 text-white font-medium`} style={STYLES.SLEEP_BUTTON}><Moon size={16} /> Sleep</button>
+                </div>
+                <div className={`rounded-lg transition-all ${sleepMode === 'wake' ? 'p-[2px]' : 'p-0'}`} style={sleepMode === 'wake' ? STYLES.GOLD_GRADIENT : {}}>
+                    <button onClick={() => dispatch({ type: 'SET_SLEEP_MODE', payload: 'wake' })} className={`w-full px-6 py-2 rounded-md flex items-center justify-center gap-2 text-black font-medium`} style={STYLES.WAKE_BUTTON}><Sun size={16} /> Wake</button>
+                </div>
+            </div>
+
+            <hr className="border-t border-gray-200" />
+
+            <button onClick={() => dispatch({ type: 'SET_VIEW', payload: 'trends' })} className="w-full py-2 rounded-lg flex justify-center items-center gap-2 text-black font-medium" style={STYLES.GOLD_GRADIENT}><TrendingUp size={18} /> View Trends</button>
+
+            <div className="p-[2px] rounded-lg" style={STYLES.GOLD_GRADIENT}>
+                <button onClick={() => { dispatch({ type: 'SET_CALENDAR_DATE', payload: new Date() }); dispatch({ type: 'SET_VIEW', payload: 'calendar' }); }} className="w-full py-[6px] rounded-md bg-white text-center font-medium text-black flex items-center justify-center gap-2">
+                    <CalendarIcon size={18} style={STYLES.GOLD_COLOR} /> View Calendar
+                </button>
+            </div>
+
+            <section className="border rounded-lg p-4 space-y-2 max-h-96 overflow-y-auto">
+                 <h3 className="text-lg font-semibold text-center">Recent Entries</h3>
+                {recentEntries.length === 0 ? <p className="text-center text-gray-500">No entries yet.</p> :
+                    recentEntries.map(e => <EntryItem key={e.id} entry={e} editId={state.editId} dispatch={dispatch} />)
+                }
+            </section>
+
+            <div className="flex justify-evenly text-sm">
+                <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".json" style={{ display: 'none' }} />
+                <button onClick={handleImportClick} className="text-gray-600 hover:text-amber-500">Import Entries</button>
+                <button onClick={handleExport} className="text-gray-600 hover:text-amber-500">Export Entries</button>
+            </div>
+        </div>
+    );
+}
+
+function TrendsView({ state, dispatch }: { state: AppState, dispatch: React.Dispatch<AppAction> }) {
+    const { entries, trendsRange, trendsCustomRange, trendsCurrentDate } = state;
+    const [customRangeModalOpen, setCustomRangeModalOpen] = useState(false);
+    const [datePickerOpen, setDatePickerOpen] = useState(false);
+
+    const chartDataMemo = useMemo(() => {
+        let start: Date, end: Date;
+        const now = new Date();
+        switch (trendsRange) {
+            case 'daily': start = new Date(trendsCurrentDate); start.setHours(0, 0, 0, 0); end = new Date(trendsCurrentDate); end.setHours(23, 59, 59, 999); break;
+            case 'weekly': start = new Date(trendsCurrentDate); start.setDate(trendsCurrentDate.getDate() - trendsCurrentDate.getDay()); start.setHours(0, 0, 0, 0); end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23, 59, 59, 999); break;
+            case 'monthly': start = new Date(trendsCurrentDate.getFullYear(), trendsCurrentDate.getMonth(), 1); end = new Date(trendsCurrentDate.getFullYear(), trendsCurrentDate.getMonth() + 1, 0, 23, 59, 59, 999); break;
+            case 'yearly': start = new Date(trendsCurrentDate.getFullYear(), 0, 1); end = new Date(trendsCurrentDate.getFullYear(), 11, 31, 23, 59, 59, 999); break;
+            case 'custom': start = new Date(trendsCustomRange.start); start.setHours(0,0,0,0); end = new Date(trendsCustomRange.end); end.setHours(23,59,59,999); break;
+            case 'all': default:
+                start = entries.length > 0 ? new Date(entries[0].timestamp) : now;
+                end = entries.length > 0 ? new Date(entries[entries.length - 1].timestamp) : now;
+                start.setHours(0,0,0,0);
+                end.setHours(23, 59, 59, 999);
+        }
+
+        const chartRange = { start, end };
+        const segments = CalculationEngine.buildLineSegments(entries, chartRange);
+        const lineData = CalculationEngine.generateLineChartData(segments, chartRange);
+
+        const dotDataPoints = CalculationEngine.buildCalculationPoints(entries)
+            .filter(p => p.timestamp >= chartRange.start.getTime() && p.timestamp <= chartRange.end.getTime());
+
+        const dotDataMap = new Map<number, ChartPoint>();
+        dotDataPoints.forEach(p => dotDataMap.set(p.timestamp, p));
+
+        const domain: [number, number] = [start.getTime(), end.getTime()];
+        const { ticks, referenceLines, majorTicks } = getChartTicksAndLines(start, end);
+
+        let rangeLabel = "";
+        if (trendsRange === 'daily') rangeLabel = start.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        else if (trendsRange === 'weekly') rangeLabel = `${start.toLocaleDateString([], {dateStyle: 'short'})} - ${end.toLocaleDateString([], {dateStyle: 'short'})}`;
+        else if (trendsRange === 'monthly') rangeLabel = start.toLocaleDateString([], { month: 'long', year: 'numeric' });
+        else if (trendsRange === 'yearly') rangeLabel = start.getFullYear().toString();
+        else if (trendsRange === 'custom' || trendsRange === 'all') rangeLabel = `${start.toLocaleDateString([], {dateStyle: 'short'})} - ${end.toLocaleDateString([], {dateStyle: 'short'})}`;
+
+        const dayDiff = Math.ceil((end.getTime() - start.getTime()) / 864e5);
+        const hasData = segments.length > 0 || dotDataPoints.length > 0;
+
+        return { lineData, dotDataMap, domain, ticks, referenceLines, hasData, rangeLabel, dayDiff, chartRange, majorTicks, segments };
+    }, [entries, trendsRange, trendsCustomRange, trendsCurrentDate]);
+
+    const { lineData, dotDataMap, domain, hasData, rangeLabel, chartRange, segments } = chartDataMemo;
+
+    const handleNav = useCallback((direction: 'prev' | 'next') => {
+        const newDate = new Date(trendsCurrentDate);
+        const sign = direction === 'next' ? 1 : -1;
+        if (trendsRange === 'daily') newDate.setDate(newDate.getDate() + sign);
+        else if (trendsRange === 'weekly') newDate.setDate(newDate.getDate() + (7 * sign));
+        else if (trendsRange === 'monthly') newDate.setMonth(newDate.getMonth() + sign);
+        else if (trendsRange === 'yearly') newDate.setFullYear(newDate.getFullYear() + sign);
+        dispatch({ type: 'SET_TRENDS_CURRENT_DATE', payload: newDate });
+    }, [dispatch, trendsCurrentDate, trendsRange]);
+
+    const handleDateLabelClick = useCallback(() => {
+        if (trendsRange === 'custom') setCustomRangeModalOpen(true);
+        else if (trendsRange !== 'all') setDatePickerOpen(true);
+    }, [trendsRange]);
+
+    const renderActiveDot = (props: any) => {
+        const { payload, cx, cy } = props;
+        if (!payload) return null;
+        const entryData = dotDataMap.get(payload.timestamp);
+        if (entryData) {
+            const strokeColor = (entryData.type === 'sleep' || entryData.type === 'wake') ? THEME.SLEEPWAKE_COLOR : THEME.GOLD;
+            return <Dot cx={cx} cy={cy} r={6} stroke={strokeColor} strokeWidth={2} fill="white" />;
+        }
+        return null;
+    };
+
+    const yTicks = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+    return (
+        <div className="p-4 max-w-4xl mx-auto space-y-6">
+            <header className="flex justify-between items-center">
+                <button onClick={() => dispatch({ type: 'SET_VIEW', payload: 'log' })} className="p-2 hover:bg-gray-100 rounded-lg" aria-label="Go back to log view"><ArrowLeft size={18} /></button>
+                <h1 className="text-2xl font-bold flex items-center gap-2"><TrendingUp size={24} style={STYLES.GOLD_COLOR} /> TRENDS</h1>
+                <span className="w-10"></span>
+             </header>
+            <div className="flex justify-between items-center">
+                <div className="flex gap-2 flex-wrap">
+                    {(["daily", "weekly", "monthly", "yearly", "all"] as Range[]).map((r) => (
+                        <button key={r} onClick={() => dispatch({ type: 'SET_TRENDS_RANGE', payload: r })} className={`px-4 py-2 rounded-lg text-sm capitalize font-medium ${trendsRange === r ? "text-black" : "bg-gray-100"}`} style={trendsRange === r ? STYLES.GOLD_GRADIENT : undefined}>{r}</button>
+                    ))}
+                </div>
+                <button onClick={() => setCustomRangeModalOpen(true)} className={`px-4 py-2 rounded-lg text-sm capitalize font-medium ${trendsRange === 'custom' ? "text-black" : "bg-gray-100"}`} style={trendsRange === 'custom' ? STYLES.GOLD_GRADIENT : undefined}>Custom</button>
+            </div>
+
+            <div className="flex justify-between items-center bg-gray-50 p-2 rounded-lg">
+                {trendsRange !== 'all' && trendsRange !== 'custom' ? ( <button onClick={() => handleNav('prev')} className="p-2 rounded-full hover:bg-gray-200" aria-label="Previous period"><ChevronLeft size={20} /></button> ) : <span className="w-9 h-9" /> }
+                <button onClick={handleDateLabelClick} disabled={trendsRange === 'all'} className="text-lg font-bold text-center p-2 rounded-lg hover:bg-gray-100 flex items-center gap-2 disabled:pointer-events-none"> {rangeLabel} </button>
+                {trendsRange !== 'all' && trendsRange !== 'custom' ? ( <button onClick={() => handleNav('next')} className="p-2 rounded-full hover:bg-gray-200" aria-label="Next period"><ChevronRight size={20} /></button> ) : <span className="w-9 h-9" /> }
+            </div>
+            {datePickerOpen && <TrendsDatePicker mode={trendsRange} currentDate={trendsCurrentDate} onClose={() => setDatePickerOpen(false)} onSelect={(date) => { dispatch({type: 'SET_TRENDS_CURRENT_DATE', payload: date}); setDatePickerOpen(false); }} />}
+            {customRangeModalOpen && <CustomRangePicker initialRange={trendsCustomRange} onClose={() => setCustomRangeModalOpen(false)} onSelect={(start, end) => { dispatch({type: 'SET_TRENDS_CUSTOM_RANGE', payload: {start, end}}); dispatch({type: 'SET_TRENDS_RANGE', payload: 'custom'}); setCustomRangeModalOpen(false); }} />}
+
+            {!hasData ? (
+                <p className="text-center text-gray-500 py-8">No entries in selected range.</p>
+            ) : (
+                <div className="space-y-6">
+                    <div className="h-[32rem] w-full m-1 p-4 border border-gray-200 rounded-lg bg-white">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={lineData} margin={{ top: 25, right: 20, left: -25, bottom: 25 }}>
+                                {yTicks.map(tick => <ReferenceLine key={`y-grid-${tick}`} y={tick} stroke="#f0f0f0" />)}
+                                {chartDataMemo.referenceLines.map((line, i) => <ReferenceLine key={`x-grid-${i}`} {...line} />)}
+                                <XAxis type="number" dataKey="timestamp" domain={domain} ticks={chartDataMemo.ticks} tick={<CustomizedXAxisTick majorTicks={chartDataMemo.majorTicks} dayDiff={chartDataMemo.dayDiff} />} allowDuplicatedCategory={false} interval={0} />
+                                <YAxis domain={[0, 10]} ticks={yTicks} tick={{ fontSize: 12 }} interval={0} />
+                                <Tooltip content={<CustomChartTooltip dotDataMap={dotDataMap} />} cursor={<CustomCursor />} />
+                                <Line connectNulls={false} type="monotone" dataKey="intensity" stroke={THEME.GOLD} strokeWidth={3} dot={<CustomizedLineDot dotDataMap={dotDataMap} />} activeDot={renderActiveDot}/>
+                             </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                    <HourlyAverages segments={segments} chartRange={chartRange} entries={entries} />
+                    <DailyAverages segments={segments} chartRange={chartRange} />
+                    <MonthlyAverages segments={segments} chartRange={chartRange} />
+                    <SleepTrends entries={entries} chartRange={chartRange} />
+                </div>
+            )}
+        </div>
+    );
+}
+
+function CalendarView({ state, dispatch }: { state: AppState, dispatch: React.Dispatch<AppAction> }) {
+    const { entriesByDay, calendarDate, calendarListStartDate, editId, entries } = state;
+    const [showMonthYearPicker, setShowMonthYearPicker] = useState(false);
+    const listContainerRef = useRef<HTMLDivElement>(null);
+    const itemRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
+
+    const calendarDays = useMemo(() => Utils.getCalendarDays(calendarDate), [calendarDate]);
+    const allEntriesSorted = useMemo(() => [...entries].sort((a, b) => b.timestamp - a.timestamp), [entries]);
+
+    const handleDayClick = useCallback((day: Date | null) => {
+        if (day) {
+            dispatch({ type: 'SET_CALENDAR_LIST_START_DATE', payload: day });
+        }
+    }, [dispatch]);
+
+    const handleMonthNav = useCallback((direction: 'prev' | 'next') => {
+        const newDate = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + (direction === 'next' ? 1 : -1), 1);
+        dispatch({ type: 'SET_CALENDAR_DATE', payload: newDate });
+        const listTargetDate = direction === 'next' ? newDate : new Date(newDate.getFullYear(), newDate.getMonth() + 1, 0);
+        dispatch({ type: 'SET_CALENDAR_LIST_START_DATE', payload: listTargetDate });
+    }, [dispatch, calendarDate]);
+
+    useEffect(() => {
+        const dateKey = calendarListStartDate.toDateString();
+        const firstEntryForDay = allEntriesSorted.find(e => new Date(e.timestamp).toDateString() === dateKey);
+
+        if (firstEntryForDay) {
+            const element = itemRefs.current.get(firstEntryForDay.id);
+            element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, [calendarListStartDate, allEntriesSorted]);
+
+    return (
+        <div className="p-2 max-w-md mx-auto space-y-2">
+            <header className="flex justify-between items-center px-2">
+                <button onClick={() => dispatch({ type: 'SET_VIEW', payload: 'log' })} className="p-2 hover:bg-gray-100 rounded-lg" aria-label="Go back to log view"><ArrowLeft size={18} /></button>
+                <div className="flex items-center gap-2">
+                    <button onClick={() => handleMonthNav('prev')} className="p-2 rounded-full hover:bg-gray-100" aria-label="Previous month"><ChevronLeft size={20} /></button>
+                    <button onClick={() => setShowMonthYearPicker(true)} className="text-lg font-bold text-center p-2 rounded-lg hover:bg-gray-100 flex items-center gap-2">
+                        {calendarDate.toLocaleString('default', { month: 'long', year: 'numeric' })}
+                        <CalendarIcon size={16} className="text-gray-500" />
+                     </button>
+                    <button onClick={() => handleMonthNav('next')} className="p-2 rounded-full hover:bg-gray-100" aria-label="Next month"><ChevronRight size={20} /></button>
+                </div>
+                <span className="w-10"></span>
+            </header>
+
+            <div className="grid grid-cols-7 gap-1 text-center text-xs">
+                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => <div key={index} className="font-bold text-gray-500 py-2">{day}</div>)}
+                {calendarDays.map((day, i) => {
+                    const isToday = day && new Date().toDateString() === day.toDateString();
+                    const dayEntries = day ? entriesByDay.get(day.toDateString()) || [] : [];
+                    const isSelected = day && day.toDateString() === calendarListStartDate.toDateString();
+                    return (
+                        <button key={i} onClick={() => handleDayClick(day)} disabled={!day} className={`relative h-14 border border-gray-200 rounded-lg flex flex-col items-center p-1 ${day ? 'cursor-pointer hover:bg-gray-50' : 'bg-gray-50'}`}>
+                            {isSelected && <div className="absolute -inset-0.5 rounded-lg p-[2px]" style={STYLES.GOLD_GRADIENT} />}
+                             <div className={`relative w-full h-full bg-white rounded-md flex flex-col items-center justify-center ${isToday ? 'font-bold' : ''}`}>
+                                {day && (<>
+                                    <span className="text-xs">{day.getDate()}</span>
+                                     <div className="mt-1 flex-grow overflow-hidden flex flex-col items-center">
+                                        <div className="flex flex-wrap justify-center">{dayEntries.slice(0, 4).map(entry => (<span key={entry.id} className="calendar-day-dot" style={{ backgroundColor: entry.intensity === null ? '#ccc' : entry.intensity === 0 ? THEME.GOLD : Utils.getIntensityColor(entry.intensity) }}></span>))}</div>
+                                        {dayEntries.length > 4 && <span className="text-xs font-bold leading-none">...</span>}
+                                    </div>
+                                 </>)}
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
+
+            {showMonthYearPicker && <MonthYearPicker currentDate={calendarDate} onClose={() => setShowMonthYearPicker(false)} onSelect={(year, month) => {
+                const newCalDate = new Date(year, month, 1);
+                dispatch({ type: 'SET_CALENDAR_DATE', payload: newCalDate });
+                const listDate = new Date(year, month + 1, 0);
+                dispatch({ type: 'SET_CALENDAR_LIST_START_DATE', payload: listDate });
+                setShowMonthYearPicker(false);
+            }} />}
+
+            <div className="border-t pt-4 mt-4">
+                <h3 className="text-lg font-bold text-center mb-2">Entries</h3>
+                <div ref={listContainerRef} className="space-y-1 max-h-[50vh] overflow-y-auto">
+                    {allEntriesSorted.length > 0 ? (
+                        allEntriesSorted.map(e => <EntryItem key={e.id} entry={e} editId={editId} dispatch={dispatch} />)
+                    ) : (
+                        <p className="text-center text-gray-500 py-4">No entries found.</p>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// =====================================================================
+//  MODAL & OVERLAY COMPONENTS
+// =====================================================================
+
+const NoteEditorModal = React.memo(({ isOpen, initialNotes, onClose, onSave }: { isOpen: boolean, initialNotes?: string, onClose: () => void, onSave: (notes: string) => void }) => {
+    const editorRef = useRef<HTMLDivElement>(null);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [_, forceUpdate] = useReducer(x => x + 1, 0);
+
+    const history = useRef<string[]>([]);
+    const historyIndex = useRef(0);
+
+    useEffect(() => {
+        if (isOpen) {
+            const notes = initialNotes || "";
+            history.current = [notes];
+            historyIndex.current = 0;
+            if (editorRef.current) {
+                editorRef.current.innerHTML = notes;
+            }
+            setShowDeleteConfirm(false);
+            forceUpdate();
+        }
+    }, [isOpen, initialNotes]);
+
+    const handleInput = useCallback(() => {
+        const newContent = editorRef.current?.innerHTML || "";
+        const currentContent = history.current[historyIndex.current];
+        if (newContent === currentContent) return;
+
+        const newHistory = history.current.slice(0, historyIndex.current + 1);
+        newHistory.push(newContent);
+        history.current = newHistory;
+        historyIndex.current = newHistory.length - 1;
+        forceUpdate();
+    }, []);
+
+    const undo = () => {
+        if (historyIndex.current > 0) {
+            historyIndex.current--;
+            const content = history.current[historyIndex.current];
+            if (editorRef.current) editorRef.current.innerHTML = content;
+            forceUpdate();
+        }
+    };
+
+    const redo = () => {
+        if (historyIndex.current < history.current.length - 1) {
+            historyIndex.current++;
+            const content = history.current[historyIndex.current];
+            if (editorRef.current) editorRef.current.innerHTML = content;
+            forceUpdate();
+        }
+    };
+
+    const handleSave = () => {
+        onSave(editorRef.current?.innerHTML || "");
+        onClose();
+    };
+
+    const handleDelete = () => {
+        onSave("");
+        onClose();
+    };
+
+    const handleFormat = (command: string) => {
+        document.execCommand(command, false);
+        editorRef.current?.focus();
+        handleInput();
+    };
+
+    const FormatButton = ({ command, children, action, disabled }: { command?: string, children: React.ReactNode, action?: () => void, disabled?: boolean }) => (
+        <button
+            onMouseDown={e => {
+                e.preventDefault();
+                if(action) action();
+                else if (command) handleFormat(command);
+             }}
+            className="p-2 hover:bg-gray-200 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={disabled}
+        >
+            {children}
+        </button>
+    );
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4" onClick={onClose}>
+            <div className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-lg flex flex-col gap-3 relative" onClick={e => e.stopPropagation()}>
+                <h3 className="text-lg font-bold text-center">Edit Note</h3>
+                <div className="flex justify-center items-center gap-1 p-2 bg-gray-100 rounded-md flex-wrap">
+                    <FormatButton command="bold"><Bold size={16} /></FormatButton>
+                    <FormatButton command="italic"><Italic size={16} /></FormatButton>
+                    <FormatButton command="underline"><Underline size={16} /></FormatButton>
+                    <FormatButton command="strikeThrough"><Strikethrough size={16} /></FormatButton>
+                    <div className="w-px bg-gray-300 h-5 mx-1"></div>
+                    <FormatButton action={undo} disabled={historyIndex.current === 0}><RotateCcw size={16} /></FormatButton>
+                    <FormatButton action={redo} disabled={historyIndex.current >= history.current.length - 1}><RotateCw size={16} /></FormatButton>
+                </div>
+                <div
+                    ref={editorRef}
+                    contentEditable={true}
+                    spellCheck={true}
+                    onInput={handleInput}
+                    className="w-full h-48 p-2 border border-gray-300 rounded-lg resize-y overflow-auto focus:outline-none focus:ring-2 focus:ring-amber-400"
+                 />
+                <div className="flex justify-between items-center">
+                    <button onClick={() => setShowDeleteConfirm(true)} className="px-4 py-2 rounded-lg border border-black text-black text-sm hover:bg-gray-100">Delete</button>
+                    <div className="flex justify-end gap-3">
+                         <button onClick={onClose} className="px-4 py-2 rounded-lg bg-gray-200 text-sm">Cancel</button>
+                        <button onClick={handleSave} className="px-4 py-2 rounded-lg text-black text-sm" style={STYLES.BLACK_TEXT_ON_GOLD}>Save</button>
+                    </div>
+                </div>
+
+                 {showDeleteConfirm && (
+                    <div className="absolute inset-0 bg-white bg-opacity-80 flex justify-center items-center rounded-xl">
+                        <div className="bg-white p-6 rounded-lg shadow-xl border text-center space-y-4">
+                            <p>Are you sure you want to delete this note?</p>
+                             <div className="flex gap-4 justify-center">
+                                <button onClick={() => setShowDeleteConfirm(false)} className="px-4 py-2 rounded-lg bg-gray-200">Cancel</button>
+                                <button onClick={handleDelete} className="px-4 py-2 rounded-lg border border-black text-black">Delete Note</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+             </div>
+        </div>
+    );
+});
+
+const MonthYearPicker = React.memo(({ currentDate, onClose, onSelect }: { currentDate: Date, onClose: () => void, onSelect: (y: number, m: number) => void }) => {
+    const [year, setYear] = useState(currentDate.getFullYear());
+    const [month, setMonth] = useState(currentDate.getMonth());
+    const years = useMemo(() => Array.from({ length: 21 }, (_, i) => new Date().getFullYear() - 10 + i), []);
+    const months = useMemo(() => Array.from({ length: 12 }, (_, i) => new Date(0, i).toLocaleString('default', { month: 'long' })), []);
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50" onClick={onClose}>
+            <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-xs" onClick={e => e.stopPropagation()}>
+                <h3 className="text-lg font-bold mb-4 text-center">Select Date</h3>
+                <div className="flex gap-4 mb-6">
+                    <div className="flex-1">
+                         <label htmlFor="month-select" className="block text-sm font-medium text-gray-700 mb-1">Month</label>
+                        <select id="month-select" value={month} onChange={e => setMonth(parseInt(e.target.value))} className="w-full p-2 border border-gray-300 rounded-lg">
+                            {months.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                         </select>
+                    </div>
+                    <div className="flex-1">
+                        <label htmlFor="year-select" className="block text-sm font-medium text-gray-700 mb-1">Year</label>
+                         <select id="year-select" value={year} onChange={e => setYear(parseInt(e.target.value))} className="w-full p-2 border border-gray-300 rounded-lg">
+                            {years.map(y => <option key={y} value={y}>{y}</option>)}
+                        </select>
+                    </div>
+                 </div>
+                <div className="flex justify-end gap-3">
+                    <button onClick={onClose} className="px-4 py-2 rounded-lg bg-gray-200 text-sm">Cancel</button>
+                    <button onClick={() => onSelect(year, month)} className="px-4 py-2 rounded-lg text-black text-sm" style={STYLES.BLACK_TEXT_ON_GOLD}>Go</button>
+                </div>
+             </div>
+        </div>
+    );
+});
+
+const TrendsDatePicker = React.memo(({ mode, currentDate, onClose, onSelect }: { mode: Range, currentDate: Date, onClose: () => void, onSelect: (date: Date) => void }) => {
+    const [date, setDate] = useState(Utils.localISO(currentDate).slice(0,10));
+    const [year, setYear] = useState(currentDate.getFullYear());
+    const years = useMemo(() => Array.from({ length: 21 }, (_, i) => new Date().getFullYear() - 10 + i), []);
+
+    if (mode === 'yearly') {
+        return (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50" onClick={onClose}>
+                <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-xs" onClick={e => e.stopPropagation()}>
+                    <h3 className="text-lg font-bold mb-4 text-center">Select Year</h3>
+                    <select value={year} onChange={e => setYear(parseInt(e.target.value))} className="w-full p-2 border border-gray-300 rounded-lg">
+                         {years.map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <div className="flex justify-end gap-3 mt-6">
+                        <button onClick={onClose} className="px-4 py-2 rounded-lg bg-gray-200 text-sm">Cancel</button>
+                         <button onClick={() => onSelect(new Date(year, 0, 1))} className="px-4 py-2 rounded-lg text-black text-sm" style={STYLES.BLACK_TEXT_ON_GOLD}>Go</button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (mode === 'monthly') {
+        return <MonthYearPicker currentDate={currentDate} onClose={onClose} onSelect={(y,m) => onSelect(new Date(y,m,1))} />
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50" onClick={onClose}>
+            <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-xs" onClick={e => e.stopPropagation()}>
+                <h3 className="text-lg font-bold mb-4 text-center">Select Date</h3>
+                 <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg" />
+                <div className="flex justify-end gap-3 mt-6">
+                    <button onClick={onClose} className="px-4 py-2 rounded-lg bg-gray-200 text-sm">Cancel</button>
+                    <button onClick={() => onSelect(new Date(date + "T00:00:00"))} className="px-4 py-2 rounded-lg text-black text-sm" style={STYLES.BLACK_TEXT_ON_GOLD}>Go</button>
+                 </div>
+            </div>
+        </div>
+    );
+});
+
+const CustomRangePicker = React.memo(({ initialRange, onClose, onSelect }: { initialRange: { start: Date, end: Date }, onClose: () => void, onSelect: (start: Date, end: Date) => void }) => {
+    const [start, setStart] = useState(Utils.localISO(initialRange.start).slice(0,10));
+    const [end, setEnd] = useState(Utils.localISO(initialRange.end).slice(0,10));
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50" onClick={onClose}>
+            <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-xs" onClick={e => e.stopPropagation()}>
+                 <h3 className="text-lg font-bold mb-4 text-center">Select Custom Range</h3>
+                <div className="space-y-4">
+                    <div>
+                        <label htmlFor="start-date" className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                         <input id="start-date" type="date" value={start} onChange={e => setStart(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg" />
+                    </div>
+                    <div>
+                        <label htmlFor="end-date" className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                         <input id="end-date" type="date" value={end} onChange={e => setEnd(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg" />
+                    </div>
+                </div>
+                <div className="flex justify-end gap-3 mt-6">
+                    <button onClick={onClose} className="px-4 py-2 rounded-lg bg-gray-200 text-sm">Cancel</button>
+                    <button onClick={() => onSelect(new Date(start + "T00:00:00"), new Date(end + "T00:00:00"))} className="px-4 py-2 rounded-lg text-black text-sm" style={STYLES.BLACK_TEXT_ON_GOLD}>Set</button>
+                </div>
+            </div>
+        </div>
+    );
+});
+
+const ToastProvider = ({ toasts, dispatch }: { toasts: ToastMessage[], dispatch: React.Dispatch<AppAction> }) => {
+    const toastIcons: Record<ToastType, React.ReactNode> = {
+        success: <Check size={20} className="text-green-500" />,
+        error: <X size={20} className="text-red-500" />,
+        info: <Info size={20} className="text-blue-500" />,
+    };
+
+    return (
+        <div className="fixed bottom-4 right-4 z-[100] w-full max-w-xs space-y-2">
+            {toasts.map(toast => (
+                <Toast key={toast.id} {...toast} icon={toastIcons[toast.type]} onClose={() => dispatch({ type: 'REMOVE_TOAST', payload: toast.id })} />
+            ))}
+        </div>
+    );
+};
+
+const Toast = ({ message, icon, onClose }: ToastMessage & { icon: React.ReactNode, onClose: () => void }) => {
+    const [isExiting, setIsExiting] = useState(false);
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setIsExiting(true);
+            setTimeout(onClose, 300);
+        }, CONFIG.TOAST_DURATION);
+
+        return () => clearTimeout(timer);
+    }, [onClose]);
+
+    return (
+        <div className={`flex items-center gap-3 p-3 bg-white rounded-lg shadow-lg border ${isExiting ? 'toast-exit' : 'toast-enter'}`}>
+            <div className="flex-shrink-0">{icon}</div>
+            <p className="text-sm text-gray-800 flex-grow">{message}</p>
+            <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100 flex-shrink-0" aria-label="Dismiss notification"><X size={16} /></button>
+        </div>
+    );
+};
+
+// =====================================================================
+//  TRENDS VIEW: SUB-COMPONENTS
+// =====================================================================
+
+const CustomChartTooltip = React.memo(({ active, payload, label, dotDataMap }: { active?: boolean, payload?: any[], label?: number, dotDataMap: Map<number, ChartPoint> }) => {
+    if (!active || !payload || !payload.length || !label) return null;
+
+    const originalEntry = dotDataMap.get(label);
+    if (!originalEntry || originalEntry.intensity === null) return null;
+
+    const { intensity, type, notes } = originalEntry;
+    const roundedIntensity = Math.round(intensity);
+
+    const grad = roundedIntensity === 0 ? THEME.GOLD_GRAD : `linear-gradient(45deg,${Utils.lighten(Utils.getIntensityColor(roundedIntensity))},${Utils.getIntensityColor(roundedIntensity)})`;
+    const textColor = roundedIntensity >= 7 ? 'white' : 'black';
+    const time = new Date(label).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+
+    return (
+        <div className="bg-white p-3 rounded-lg border shadow-lg relative min-w-[150px]">
+             <div className="absolute top-1 left-1 right-1 flex justify-between items-center px-1">
+                <span>
+                    {type === 'sleep' && <Moon size={14} className="text-black" />}
+                    {type === 'wake' && <Sun size={14} className="text-black" />}
+                </span>
+            </div>
+            <div className="flex flex-col items-center pt-4">
+                <div className="w-12 h-12 flex items-center justify-center rounded-lg font-bold text-xl mb-2" style={{ background: grad, color: textColor }}>
+                    {roundedIntensity}
+                </div>
+                <div className="text-center">
+                     <p className="font-semibold text-sm">{Utils.getLabel(roundedIntensity)}</p>
+                    <p className="text-xs text-gray-600">{time}</p>
+                </div>
+            </div>
+        </div>
+    );
+});
+
+const HourlyChartTooltip = React.memo(({ active, payload }: { active?: boolean, payload?: any[] }) => {
+    if (!active || !payload || !payload.length) return null;
+    const data = payload[0].payload;
+    if (data.average === null) return null;
+    const avg = data.average;
+    const avgRounded = Math.round(avg);
+    const hour = data.hour;
+    const formatHour = (h: number, isEnd = false) => {
+        const effHour = isEnd ? (h + 1) % 24 : h;
+        const H = effHour % 12 === 0 ? 12 : effHour % 12;
+        const ampm = effHour < 12 || effHour === 24 ? 'am' : 'pm';
+        return `${H}${ampm}`;
+    };
+    const timeLabel = `${formatHour(hour)} - ${formatHour(hour, true)}`;
+    const grad = avgRounded === 0 ? THEME.GOLD_GRAD : `linear-gradient(45deg,${Utils.lighten(Utils.getIntensityColor(avgRounded))},${Utils.getIntensityColor(avgRounded)})`;
+    const textColor = avgRounded === 0 ? 'black' : (avgRounded >= 7 ? 'white' : 'black');
+    return (
+        <div className="bg-white p-3 rounded-lg border shadow-lg text-center min-w-[120px]">
+            <p className="font-bold text-sm mb-1">{timeLabel}</p>
+            <div className="w-10 h-10 mx-auto flex items-center justify-center rounded-lg font-bold text-lg mb-1" style={{ background: grad, color: textColor }}>
+                {avg}
+            </div>
+            <p className="text-xs text-gray-600">Avg. Intensity</p>
+            <p className="text-xs text-gray-500 mt-1">({data.daysInPeriod} days)</p>
+        </div>
+    );
+});
+
+const DailyChartTooltip = React.memo(({ active, payload }: { active?: boolean, payload?: any[] }) => {
+    if (!active || !payload || !payload.length) return null;
+    const data = payload[0].payload;
+    if (data.avg === null) return null;
+    const avg = data.avg;
+    const avgRounded = Math.round(avg);
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayLabel = dayNames[data.dayIndex];
+    const grad = avgRounded === 0 ? THEME.GOLD_GRAD : `linear-gradient(45deg,${Utils.lighten(Utils.getIntensityColor(avgRounded))},${Utils.getIntensityColor(avgRounded)})`;
+    const textColor = avgRounded === 0 ? 'black' : (avgRounded >= 7 ? 'white' : 'black');
+    return (
+        <div className="bg-white p-3 rounded-lg border shadow-lg text-center min-w-[120px]">
+            <p className="font-bold text-sm mb-1">{dayLabel}</p>
+            <div className="w-10 h-10 mx-auto flex items-center justify-center rounded-lg font-bold text-lg mb-1" style={{ background: grad, color: textColor }}>
+                {avg}
+            </div>
+            <p className="text-xs text-gray-600">Avg. Intensity</p>
+            <p className="text-xs text-gray-500 mt-1">({data.daysInPeriod} days)</p>
+        </div>
+    );
+});
+
+const MonthlyChartTooltip = React.memo(({ active, payload }: { active?: boolean, payload?: any[] }) => {
+    if (!active || !payload || !payload.length) return null;
+    const data = payload[0].payload;
+    if (data.avg === null) return null;
+    const avg = data.avg;
+    const avgRounded = Math.round(avg);
+    const monthLabel = data.month;
+    const grad = avgRounded === 0 ? THEME.GOLD_GRAD : `linear-gradient(45deg,${Utils.lighten(Utils.getIntensityColor(avgRounded))},${Utils.getIntensityColor(avgRounded)})`;
+    const textColor = avgRounded === 0 ? 'black' : (avgRounded >= 7 ? 'white' : 'black');
+    return (
+        <div className="bg-white p-3 rounded-lg border shadow-lg text-center min-w-[120px]">
+            <p className="font-bold text-sm mb-1">{monthLabel}</p>
+            <div className="w-10 h-10 mx-auto flex items-center justify-center rounded-lg font-bold text-lg mb-1" style={{ background: grad, color: textColor }}>
+                {avg}
+            </div>
+            <p className="text-xs text-gray-600">Avg. Intensity</p>
+            <p className="text-xs text-gray-500 mt-1">({data.daysInPeriod} days)</p>
+        </div>
+    );
+});
+
+const CustomizedLineDot = (props: any) => {
+    const { cx, cy, payload, dotDataMap } = props;
+    if (!dotDataMap || !payload) return null;
+
+    const entryData = dotDataMap.get(payload.timestamp);
+    if (entryData) {
+        const dotColor = (entryData.type === 'sleep' || entryData.type === 'wake') ? THEME.SLEEPWAKE_COLOR : THEME.GOLD;
+        return <Dot cx={cx} cy={cy} r={5} fill={dotColor} />;
+    }
+    return null;
+};
+
+const CustomCursor = (props: any) => {
+  const { x, y, height } = props;
+  if (typeof x !== 'number' || typeof y !== 'number' || typeof height !== 'number' || isNaN(x) || isNaN(y) || isNaN(height)) {
+    return null;
+  }
+  return <line x1={x} y1={y} x2={x} y2={y + height} stroke="#f0f0f0" strokeWidth={2} />;
+};
+const CustomizedXAxisTick = (props: any) => {
+    const { x, y, payload, majorTicks, dayDiff } = props;
+    if (payload.value === undefined) return null;
+
+    const isMajor = majorTicks.has(payload.value);
+    const tickFormatter = (timestamp: number) => {
+        const date = new Date(timestamp);
+        if (dayDiff <= 2) return date.toLocaleTimeString([], { hour: 'numeric', hour12: true }).replace(' ', '');
+        if (dayDiff <= 14) {
+            return date.toLocaleDateString([], { month: 'numeric', day: 'numeric' });
+        }
+        if (dayDiff <= 92) { // approx 3 months
+            if (isMajor) return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            return '';
+        }
+        if (dayDiff > 92) { // Yearly or more
+            if (isMajor) return date.toLocaleDateString([], { month: 'short' });
+            return '';
+        }
+        return date.toLocaleDateString([], { month: 'short', year: '2-digit' });
+    };
+    const formattedTick = tickFormatter(payload.value);
+
+    return (
+        <g transform={`translate(${x},${y})`}>
+            <line x1={0} y1={0} x2={0} y2={isMajor ? 8 : 4} stroke="#666" />
+            <text x={0} y={0} dy={isMajor ? 20 : 12} textAnchor="middle" fill="#666" fontWeight={isMajor ? 'bold' : 'normal'} fontSize={10}>
+                {formattedTick}
+            </text>
+        </g>
+     );
+};
+
+const getChartTicksAndLines = (start: Date, end: Date) => {
+    const timeDiff = end.getTime() - start.getTime();
+    const dayDiff = Math.ceil(timeDiff / 864e5);
+
+    let ticks: number[] = [];
+    const majorTicks = new Set<number>();
+
+    if (dayDiff <= 2) { // Daily view
+        for (let d = 0; d <= dayDiff; d++) {
+            const currentDay = new Date(start);
+            currentDay.setDate(start.getDate() + d);
+            for (let h = 0; h < 24; h += 4) { // Every 4 hours
+                const tickTime = new Date(currentDay).setHours(h, 0, 0, 0);
+                if (tickTime >= start.getTime() && tickTime <= end.getTime()) {
+                    ticks.push(tickTime);
+                    if (h === 0 || h === 12) majorTicks.add(tickTime);
+                }
+            }
+        }
+    } else if (dayDiff <= 14) { // Weekly view
+        for (let d = 0; d <= dayDiff; d++) {
+            const tickTime = new Date(start);
+            tickTime.setDate(start.getDate() + d);
+            tickTime.setHours(12, 0, 0, 0); // Tick for noon each day
+            if (tickTime >= start.getTime() && tickTime <= end.getTime()) {
+                ticks.push(tickTime.getTime());
+                majorTicks.add(tickTime.getTime());
+            }
+        }
+    } else if (dayDiff <= 92) { // Monthly view (up to ~3 months)
+        const loopDate = new Date(start);
+        while(loopDate <= end) {
+            if (loopDate.getDay() === 0) { // Sundays
+                ticks.push(loopDate.getTime());
+                majorTicks.add(loopDate.getTime());
+            }
+            loopDate.setDate(loopDate.getDate() + 1);
+        }
+    } else { // Yearly / All / Custom Large
+        const loopDate = new Date(start.getFullYear(), start.getMonth(), 1);
+        while(loopDate <= end) {
+            ticks.push(loopDate.getTime());
+            majorTicks.add(loopDate.getTime());
+            loopDate.setMonth(loopDate.getMonth() + 1);
+        }
+    }
+
+    const referenceLines = ticks.map(t => ({ x: t, stroke: majorTicks.has(t) ? '#e0e0e0' : '#f0f0f0' }));
+    return { ticks: [...new Set(ticks.sort((a, b) => a - b))], referenceLines, majorTicks };
+};
+
+const CollapsibleSection = ({ title, children, defaultOpen = false }: { title: string, children: React.ReactNode, defaultOpen?: boolean }) => {
+    const [isOpen, setIsOpen] = useState(defaultOpen);
+    return (
+        <div className="border rounded-lg bg-white transition-all duration-300">
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="w-full flex items-center text-left p-4"
+                aria-expanded={isOpen}
+            >
+                <div className="w-6" />
+                 <h3 className="text-lg font-bold text-center flex-grow">{title}</h3>
+                <ChevronDown
+                    size={24}
+                    className={`w-6 transform transition-transform duration-300 text-gray-500 ${isOpen ? 'rotate-180' : ''}`}
+                    aria-hidden="true"
+                />
+            </button>
+            <div
+                className={`transition-[max-height] duration-500 ease-in-out overflow-hidden ${isOpen ? 'max-h-[2000px]' : 'max-h-0'}`}
+            >
+                <div className="p-4 pt-0">
+                    {children}
+                 </div>
+            </div>
+        </div>
+    );
+};
+
+const HourlyAverages = React.memo(({ segments, chartRange, entries }: { segments: Segment[], chartRange: { start: Date, end: Date }, entries: Entry[] }) => {
+    const hourlyStats = useMemo(() => {
+        const stats = Array.from({ length: 24 }, (_, i) => ({ hour: i, sum: 0, daysInPeriod: 0, entryCount: 0, average: null as number | null }));
+        const HOUR_MS = 3600 * 1000;
+
+        let loopDate = new Date(chartRange.start);
+        loopDate.setHours(0, 0, 0, 0);
+
+        while (loopDate <= chartRange.end) {
+            for (let hour = 0; hour < 24; hour++) {
+                const dayHourStart = new Date(loopDate);
+                dayHourStart.setHours(hour, 0, 0, 0);
+                const dayHourEnd = new Date(dayHourStart.getTime() + HOUR_MS);
+
+                if (dayHourStart.getTime() > chartRange.end.getTime() || dayHourEnd.getTime() < chartRange.start.getTime()) continue;
+
+                const { average } = CalculationEngine.calculateTimeWeightedAverage(segments, dayHourStart.getTime(), dayHourEnd.getTime());
+
+                stats[hour].sum += average ?? 0;
+                stats[hour].daysInPeriod++;
+            }
+            loopDate.setDate(loopDate.getDate() + 1);
+        }
+
+        stats.forEach((hourStat, hour) => {
+            hourStat.entryCount = entries.filter(e => new Date(e.timestamp).getHours() === hour).length;
+            if (hourStat.daysInPeriod > 0) {
+                hourStat.average = parseFloat((hourStat.sum / hourStat.daysInPeriod).toFixed(1));
+            }
+        });
+        return stats;
+    }, [segments, chartRange, entries]);
+
+    const renderColumn = (slots: { label: string, hour: number }[]) => (
+        <div className="space-y-2">
+            {slots.map(({ label, hour }) => {
+                const stat = hourlyStats[hour];
+                const avg = stat.average;
+                const avgRounded = avg !== null ? Math.round(avg) : null;
+                const bgColor = avgRounded === 0 ? THEME.GOLD_GRAD : avgRounded !== null ? Utils.getIntensityColor(avgRounded) : 'transparent';
+                const textColor = avgRounded === 0 ? 'black' : (avgRounded !== null && avgRounded >= 7 ? 'white' : 'black');
+
+                return (
+                     <div key={hour} className="flex items-center justify-between text-xs p-2 rounded-md bg-gray-50">
+                        <span className="font-semibold text-gray-600 truncate pr-2">{label}</span>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                             <span className="text-gray-500 text-right">({stat.entryCount})</span>
+                            <span className="font-bold h-6 flex items-center justify-center rounded px-2 min-w-[2.5rem]" style={{ background: bgColor, color: textColor }}>
+                                {avg !== null ? avg : '-'}
+                            </span>
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+
+    const timeSlots = useMemo(() => ({
+        am1: Array.from({ length: 6 }, (_, i) => ({ label: `${i === 0 ? 12 : i}-${i + 1}`, hour: i })),
+        am2: Array.from({ length: 6 }, (_, i) => ({ label: `${i + 6}-${i + 7}`, hour: i + 6 })),
+        pm1: Array.from({ length: 6 }, (_, i) => ({ label: `${i === 0 ? 12 : i}-${i + 1}`, hour: i + 12 })),
+        pm2: Array.from({ length: 6 }, (_, i) => ({ label: `${(i + 6) % 12 === 0 ? 12 : (i + 6) % 12}-${(i + 7) % 12 === 0 ? 12 : (i + 7) % 12}`, hour: i + 18 })),
+    }), []);
+
+    const hasChartData = hourlyStats.some(d => d.average !== null);
+    const yAxisTicks = [0, 2, 4, 6, 8, 10];
+    const xAxisTicks = [0, 3, 6, 9, 12, 15, 18, 21];
+
+    return (
+        <CollapsibleSection title="Hourly Averages" defaultOpen={true}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+                <div className="space-y-4">
+                    <h4 className="font-bold text-center text-gray-700">AM</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         {renderColumn(timeSlots.am1)}
+                        {renderColumn(timeSlots.am2)}
+                    </div>
+                </div>
+                <div className="space-y-4">
+                     <h4 className="font-bold text-center text-gray-700">PM</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {renderColumn(timeSlots.pm1)}
+                        {renderColumn(timeSlots.pm2)}
+                     </div>
+                </div>
+            </div>
+            {hasChartData && (
+                <div className="mt-6 pt-4 border-t border-gray-200">
+                    <div style={{ height: '200px', width: '100%' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={hourlyStats} margin={{ top: 5, right: 10, left: -25, bottom: 5 }}>
+                                {yAxisTicks.map(tick => <ReferenceLine key={`y-grid-${tick}`} y={tick} stroke="#f0f0f0" />)}
+                                {xAxisTicks.map(tick => <ReferenceLine key={`x-grid-${tick}`} x={tick} stroke="#f0f0f0" />)}
+                                <XAxis dataKey="hour" type="number" domain={[0, 23]} ticks={xAxisTicks} tickFormatter={(h) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? 'a' : 'p'}`} tick={{ fontSize: 10 }} />
+                                <YAxis domain={[0, 10]} ticks={yAxisTicks} tick={{ fontSize: 10 }} />
+                                <Tooltip content={<HourlyChartTooltip />} />
+                                <Line type="monotone" dataKey="average" stroke={THEME.GOLD} strokeWidth={2} dot={{ r: 3 }} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            )}
+        </CollapsibleSection>
+    );
+});
+
+const DailyAverages = React.memo(({ segments, chartRange }: { segments: Segment[], chartRange: { start: Date, end: Date } }) => {
+    const dailyStats = useMemo(() => {
+        const daysOfWeek = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+        const stats = Array.from({ length: 7 }, (_, i) => ({ day: daysOfWeek[i], dayIndex: i, sum: 0, daysInPeriod: 0, avg: null as number | null }));
+
+        let loopDate = new Date(chartRange.start);
+        loopDate.setHours(0, 0, 0, 0);
+
+        while (loopDate <= chartRange.end) {
+            const dayIndex = loopDate.getDay();
+            const { average } = CalculationEngine.calculateTimeWeightedAverage(segments, loopDate.getTime(), loopDate.getTime() + CONFIG.MAX_CARRY_MS);
+            if(average !== null) {
+                stats[dayIndex].sum += average;
+                stats[dayIndex].daysInPeriod++;
+            }
+            loopDate.setDate(loopDate.getDate() + 1);
+        }
+
+        stats.forEach(dayStat => {
+            if (dayStat.daysInPeriod > 0) {
+                dayStat.avg = parseFloat((dayStat.sum / dayStat.daysInPeriod).toFixed(1));
+            }
+        });
+        return stats;
+    }, [segments, chartRange]);
+
+    const hasChartData = dailyStats.some(d => d.avg !== null);
+    const yAxisTicks = [0, 2, 4, 6, 8, 10];
+
+    return (
+        <CollapsibleSection title="Daily Averages">
+            <div className="grid grid-cols-7 gap-2 text-center">
+                {dailyStats.map((stat, index) => ( <div key={`${stat.day}-${index}`} className="font-bold text-gray-500 text-xs">{stat.day}</div> ))}
+                 {dailyStats.map((stat, index) => {
+                    const avg = stat.avg;
+                    const avgRounded = avg !== null ? Math.round(avg) : null;
+                    const bgColor = avgRounded === 0 ? THEME.GOLD_GRAD : avgRounded !== null ? Utils.getIntensityColor(avgRounded) : 'transparent';
+                    const textColor = avgRounded === 0 ? 'black' : (avgRounded !== null && avgRounded >= 7 ? 'white' : 'black');
+                    return (
+                        <div key={`${stat.day}-avg-${index}`} className="h-10 flex items-center justify-center rounded" style={{ background: bgColor, color: textColor }}>
+                             <span className="font-bold text-sm">{avg !== null ? avg : '-'}</span>
+                        </div>
+                    );
+                })}
+            </div>
+            {hasChartData && (
+                <div className="mt-6 pt-4 border-t border-gray-200">
+                    <div style={{ height: '200px', width: '100%' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={dailyStats} margin={{ top: 5, right: 10, left: -25, bottom: 5 }}>
+                                {yAxisTicks.map(tick => <ReferenceLine key={`y-grid-${tick}`} y={tick} stroke="#f0f0f0" />)}
+                                {dailyStats.map((stat, index) => <ReferenceLine key={`x-grid-${index}`} x={index} stroke="#f0f0f0" />)}
+                                <XAxis dataKey="dayIndex" type="number" domain={[-0.5, 6.5]} ticks={[0,1,2,3,4,5,6]} tickFormatter={(index) => dailyStats[index]?.day || ''} tick={{ fontSize: 10 }} />
+                                <YAxis domain={[0, 10]} ticks={yAxisTicks} tick={{ fontSize: 10 }} />
+                                <Tooltip content={<DailyChartTooltip />} />
+                                <Line type="monotone" dataKey="avg" stroke={THEME.GOLD} strokeWidth={2} dot={{ r: 3 }} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            )}
+        </CollapsibleSection>
+    );
+});
+
+const MonthlyAverages = React.memo(({ segments, chartRange }: { segments: Segment[], chartRange: { start: Date, end: Date } }) => {
+    const monthlyStats = useMemo(() => {
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const stats = Array.from({ length: 12 }, (_, i) => ({ month: monthNames[i], sum: 0, daysInPeriod: 0, avg: null as number | null }));
+        const yearOfRange = chartRange.start.getFullYear();
+
+        for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
+            const firstDayOfMonth = new Date(yearOfRange, monthIndex, 1);
+            const lastDayOfMonth = new Date(yearOfRange, monthIndex + 1, 0);
+
+            let loopDate = new Date(firstDayOfMonth);
+            while (loopDate <= lastDayOfMonth) {
+                if (loopDate >= chartRange.start && loopDate <= chartRange.end) {
+                    const { average } = CalculationEngine.calculateTimeWeightedAverage(segments, loopDate.getTime(), loopDate.getTime() + CONFIG.MAX_CARRY_MS);
+                    if(average !== null) {
+                        stats[monthIndex].sum += average;
+                        stats[monthIndex].daysInPeriod++;
+                    }
+                }
+                loopDate.setDate(loopDate.getDate() + 1);
+            }
+        }
+
+        stats.forEach(monthStat => {
+            if (monthStat.daysInPeriod > 0) monthStat.avg = parseFloat((monthStat.sum / monthStat.daysInPeriod).toFixed(1));
+        });
+        return stats;
+    }, [segments, chartRange]);
+
+    const renderRow = (statsRow: typeof monthlyStats) => (
+        <>
+            <div className="grid grid-cols-6 gap-2 text-center">
+                {statsRow.map(stat => ( <div key={`${stat.month}-label`} className="font-bold text-gray-500 text-xs">{stat.month}</div> ))}
+             </div>
+            <div className="grid grid-cols-6 gap-2 text-center">
+                {statsRow.map(stat => {
+                    const avg = stat.avg;
+                    const avgRounded = avg !== null ? Math.round(avg) : null;
+                    const bgColor = avgRounded === 0 ? THEME.GOLD_GRAD : avgRounded !== null ? Utils.getIntensityColor(avgRounded) : 'transparent';
+                    const textColor = avgRounded === 0 ? 'black' : (avgRounded !== null && avgRounded >= 7 ? 'white' : 'black');
+                    return (
+                     <div key={`${stat.month}-avg`} className="h-10 flex items-center justify-center rounded" style={{ background: bgColor, color: textColor }}>
+                            <span className="font-bold text-sm">{avg !== null ? avg : '-'}</span>
+                        </div>
+                    );
+                })}
+            </div>
+        </>
+    );
+
+    const hasChartData = monthlyStats.some(d => d.avg !== null);
+    const yAxisTicks = [0, 2, 4, 6, 8, 10];
+
+    return (
+        <CollapsibleSection title="Monthly Averages">
+            <div className="space-y-3">
+                {renderRow(monthlyStats.slice(0, 6))}
+                {renderRow(monthlyStats.slice(6, 12))}
+            </div>
+            {hasChartData && (
+                <div className="mt-6 pt-4 border-t border-gray-200">
+                    <div style={{ height: '200px', width: '100%' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={monthlyStats} margin={{ top: 5, right: 10, left: -25, bottom: 5 }}>
+                                {yAxisTicks.map(tick => <ReferenceLine key={`y-grid-${tick}`} y={tick} stroke="#f0f0f0" />)}
+                                {monthlyStats.map((stat, index) => <ReferenceLine key={`x-grid-${stat.month}-${index}`} x={stat.month} stroke="#f0f0f0" />)}
+                                <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                                <YAxis domain={[0, 10]} ticks={yAxisTicks} tick={{ fontSize: 10 }} />
+                                <Tooltip content={<MonthlyChartTooltip />} />
+                                <Line type="monotone" dataKey="avg" stroke={THEME.GOLD} strokeWidth={2} dot={{ r: 3 }} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            )}
+        </CollapsibleSection>
+    );
+});
+
+const SleepTrends = React.memo(({ entries, chartRange }: { entries: Entry[], chartRange: { start: Date, end: Date } }) => {
+    const confirmedSleepCycles = useMemo(() => CalculationEngine.calculateConfirmedSleepCycles(entries), [entries]);
+
+    const { orderedStats, chartStat } = useMemo(() => {
+        const MS_PER_DAY = 24 * 60 * 60 * 1000;
+        const stats: Record<string, { value: string, context: string }> = {};
+        const getDateKey = (timestamp: number) => new Date(timestamp).toISOString().slice(0, 10);
+
+        const calculateAverage = (periodStart: number, periodEnd: number, totalDaysInPeriod: number) => {
+            const cyclesInRange = confirmedSleepCycles.filter(c => c.wakeTime >= periodStart && c.wakeTime < periodEnd);
+            if (cyclesInRange.length === 0) return { value: '0m', context: `Based on 0 of ${totalDaysInPeriod} days` };
+            const totalDuration = cyclesInRange.reduce((sum, c) => sum + c.duration, 0);
+            const daysWithSleepCount = new Set(cyclesInRange.map(c => getDateKey(c.wakeTime))).size;
+            const averageDuration = totalDuration / daysWithSleepCount;
+            return { value: Utils.formatDuration(averageDuration), context: `Based on ${daysWithSleepCount} of ${totalDaysInPeriod} days` };
+        };
+
+        const nowMs = new Date().setHours(23, 59, 59, 999);
+        const chartTotalDays = Math.round((chartRange.end.getTime() - chartRange.start.getTime()) / MS_PER_DAY) || 1;
+        stats['Chart'] = calculateAverage(chartRange.start.getTime(), chartRange.end.getTime(), chartTotalDays);
+
+        const fixedRanges = { 'Last 7 Days': 7, 'Last 30 Days': 30, 'Last 90 Days': 90, 'Last 6 Months': 182, 'Last 12 Months': 365 };
+        for (const [label, days] of Object.entries(fixedRanges)) {
+            stats[label] = calculateAverage(nowMs - (days * MS_PER_DAY), nowMs, days);
+        }
+
+        if (entries.length > 0) {
+            const firstEntryTime = entries[0].timestamp;
+            const overallTotalDays = Math.round((nowMs - firstEntryTime) / MS_PER_DAY) || 1;
+            stats['Overall Avg'] = calculateAverage(firstEntryTime, nowMs, overallTotalDays);
+        } else {
+            stats['Overall Avg'] = { value: '0m', context: 'Based on 0 of 0 days' };
+        }
+
+        const displayOrder = ['Last 7 Days', 'Last 30 Days', 'Last 90 Days', 'Last 6 Months', 'Last 12 Months', 'Overall Avg'];
+        return { orderedStats: displayOrder.map(label => ({ label, ...stats[label] })), chartStat: { label: 'Chart', ...stats['Chart'] } };
+    }, [entries, chartRange, confirmedSleepCycles]);
+
+    return (
+        <CollapsibleSection title="Sleep Trends">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-center">
+                {orderedStats.map(({ label, value, context = '' }) => (
+                    <div key={label} className="bg-gray-50 p-3 rounded-lg flex flex-col justify-center">
+                        <div className="text-xs text-gray-500 font-semibold">{label}</div>
+                        <div className="text-lg font-bold">{value}</div>
+                        <div className="text-[10px] text-gray-400">{context}</div>
+                    </div>
+                ))}
+            </div>
+            <div className="flex justify-center mt-4">
+                 <div className="bg-gray-50 p-3 rounded-lg flex flex-col justify-center text-center w-full sm:w-auto sm:min-w-[150px]">
+                    <div className="text-xs text-gray-500 font-semibold">{chartStat.label}</div>
+                    <div className="text-lg font-bold">{chartStat.value}</div>
+                    <div className="text-[10px] text-gray-400">{chartStat?.context}</div>
+                </div>
+            </div>
+        </CollapsibleSection>
+    );
+});
+
+// =====================================================================
+//  ROOT COMPONENT & APP LOGIC
+// =====================================================================
+const getInitialEntries = (): Entry[] => {
+    const entries: Entry[] = [];
+    const add = (e: Omit<Entry, 'id'>) => entries.push({ ...e, id: Utils.uid() });
+    const d = (day: number, hour: number, minute: number = 0) => new Date(2025, 6, day, hour, minute).getTime();
+    add({ intensity: 2, timestamp: d(1, 17), type: 'depression' });
+    add({ intensity: 1, timestamp: d(1, 23, 30), type: 'sleep' });
+    add({ intensity: 0, timestamp: d(2, 8), type: 'wake' });
+    add({ intensity: 4, timestamp: d(2, 11), type: 'depression' });
+    add({ intensity: 4, timestamp: d(3, 13, 0), type: 'depression' });
+    add({ intensity: 3, timestamp: d(3, 13, 30), type: 'depression' });
+    add({ intensity: 3, timestamp: d(3, 23, 30), type: 'sleep' });
+    add({ intensity: 8, timestamp: d(5, 9), type: 'depression', notes: "<b>Very rough morning.</b>" });
+    add({ intensity: 5, timestamp: d(5, 14), type: 'depression' });
+    add({ intensity: 6, timestamp: d(5, 22), type: 'sleep' });
+    add({ intensity: 2, timestamp: d(6, 7), type: 'wake' });
+    add({ intensity: 2, timestamp: d(6, 11), type: 'depression', notes: "<i>Feeling a bit better today.</i>" });
+    add({ intensity: 0, timestamp: d(6, 18), type: 'depression' });
+    return entries.sort((a,b) => a.timestamp - b.timestamp);
+};
+
+const App: React.FC = () => {
+    const [state, dispatch] = useReducer(appReducer, initialState);
+    const debouncedEntries = useDebounce(state.entries, CONFIG.LOCAL_STORAGE_DEBOUNCE);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            const saved = localStorage.getItem(CONFIG.APP_DATA_KEY);
+            if (saved) {
+                const data = JSON.parse(saved);
+                if (data.version === CONFIG.APP_DATA_VERSION && data.entries) {
+                    dispatch({ type: 'LOAD_ENTRIES', payload: data.entries });
+                } else {
+                    dispatch({ type: 'LOAD_ENTRIES', payload: getInitialEntries() });
+                }
+            } else {
+                dispatch({ type: 'LOAD_ENTRIES', payload: getInitialEntries() });
+            }
+        } catch (error) {
+            console.error("Failed to load entries:", error);
+            dispatch({ type: 'LOAD_ENTRIES', payload: getInitialEntries() });
+        }
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            const dataToSave = { version: CONFIG.APP_DATA_VERSION, entries: debouncedEntries };
+            localStorage.setItem(CONFIG.APP_DATA_KEY, JSON.stringify(dataToSave));
+        } catch (error) {
+            console.error("Failed to save entries:", error);
+        }
+    }, [debouncedEntries]);
+
+    const CurrentView = useMemo(() => ({
+        'log': LogView,
+        'trends': TrendsView,
+        'calendar': CalendarView
+    }[state.view]), [state.view]);
+
+    const entryToEditNote = state.editingNoteId ? state.entries.find(e => e.id === state.editingNoteId) : null;
+
+    return (
+        <ErrorBoundary>
+            <div style={{fontFamily: 'Montserrat, sans-serif'}}>
+                <GlobalStyles />
+                <ToastProvider toasts={state.toasts} dispatch={dispatch} />
+
+                <CurrentView state={state} dispatch={dispatch} />
+
+                {state.pendingOverwrite && state.duplicateEntry &&
+                    <OverwriteModal entry={state.pendingOverwrite} onConfirm={() => dispatch({ type: 'CONFIRM_OVERWRITE' })} onCancel={() => dispatch({ type: 'CANCEL_OVERWRITE' })} />
+                }
+                {state.importConflict && (
+                    <ImportConflictModal conflict={state.importConflict} onResolve={(res) => dispatch({ type: 'RESOLVE_IMPORT_CONFLICT', payload: res })} onCancel={() => dispatch({ type: 'SET_IMPORT_CONFLICT', payload: null })} />
+                )}
+                <NoteEditorModal
+                    isOpen={!!entryToEditNote}
+                    initialNotes={entryToEditNote?.notes}
+                    onClose={() => dispatch({ type: 'SET_EDITING_NOTE_ID', payload: null })}
+                    onSave={(notes) => {
+                        if (state.editingNoteId) {
+                            dispatch({ type: 'UPDATE_NOTE', payload: { id: state.editingNoteId, notes } })
+                        }
+                    }}
+                />
+            </div>
+        </ErrorBoundary>
+    );
+};
+
+class ErrorBoundary extends React.Component<React.PropsWithChildren<{}>, { hasError: boolean }> {
+    constructor(props: React.PropsWithChildren<{}>) {
+        super(props);
+        this.state = { hasError: false };
+    }
+
+    static getDerivedStateFromError(error: Error) {
+        return { hasError: true };
+    }
+
+    componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+        console.error("Uncaught error:", error, errorInfo);
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="w-screen h-screen flex flex-col justify-center items-center p-4 bg-gray-100">
+                    <div className="text-center">
+                        <h1 className="text-2xl font-bold text-red-600">Application Error</h1>
+                        <p className="text-gray-700 mt-2">Something went wrong. Please refresh the page to try again.</p>
+                        <button
+                            onClick={() => window.location.reload()}
+                            className="mt-4 px-4 py-2 rounded-lg text-white font-semibold bg-red-500 hover:bg-red-600"
+                        >
+                            Refresh Page
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
+export default App;
