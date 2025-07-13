@@ -16,10 +16,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowLeft
 import androidx.compose.material.icons.automirrored.filled.ArrowRight
@@ -176,12 +174,10 @@ fun DateTimePickerModal(onDismiss: () -> Unit, onSave: (Long) -> Unit) {
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = Color.White,
-            tonalElevation = 0.dp
+            tonalElevation = 8.dp
         ) {
             Column(
-                modifier = Modifier
-                    .padding(16.dp)
-                    .verticalScroll(rememberScrollState()),
+                modifier = Modifier.padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 OutlinedTextField(
@@ -192,9 +188,7 @@ fun DateTimePickerModal(onDismiss: () -> Unit, onSave: (Long) -> Unit) {
                     textStyle = TextStyle(textAlign = TextAlign.Center, fontSize = 22.sp, fontWeight = FontWeight.Bold),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Color.Black,
-                        unfocusedBorderColor = Color.Black,
-                        unfocusedContainerColor = Color.White,
-                        focusedContainerColor = Color.White
+                        unfocusedBorderColor = Color.Black
                     )
                 )
                 Spacer(Modifier.height(16.dp))
@@ -206,6 +200,7 @@ fun DateTimePickerModal(onDismiss: () -> Unit, onSave: (Long) -> Unit) {
                     onMonthYearClick = { showMonthYearPicker = true },
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(16.dp))
                 TimePickerView(
                     calendar = calendarState,
                     onTimeSelected = { hour, minute, isPM ->
@@ -216,7 +211,7 @@ fun DateTimePickerModal(onDismiss: () -> Unit, onSave: (Long) -> Unit) {
                         }
                     }
                 )
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(16.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -308,7 +303,7 @@ fun CalendarView(calendar: Calendar, onDateSelected: (Int) -> Unit, onMonthYearC
                 ) {
                     Text(
                         text = dayNumber.toString(),
-                        color = Color.Black,
+                        color = if (isSelected) Color.Black else Color.Black,
                         fontSize = 14.sp
                     )
                 }
@@ -352,7 +347,9 @@ fun TimePickerView(calendar: Calendar, onTimeSelected: (Int, Int, Boolean) -> Un
                         fontWeight = FontWeight.Bold,
                         fontSize = if (hour == currentHour) 20.sp else 16.sp,
                         color = if (hour == currentHour) AppColors.Gold else Color.Gray,
-                        modifier = Modifier.clickable { onTimeSelected(hour, currentMinute, currentIsPM) }.padding(4.dp)
+                        modifier = Modifier
+                            .clickable { onTimeSelected(hour, currentMinute, currentIsPM) }
+                            .padding(4.dp)
                     )
                 }
             }
@@ -370,29 +367,30 @@ fun TimePickerView(calendar: Calendar, onTimeSelected: (Int, Int, Boolean) -> Un
                         fontWeight = FontWeight.Bold,
                         fontSize = if (minute == currentMinute) 20.sp else 16.sp,
                         color = if (minute == currentMinute) AppColors.Gold else Color.Gray,
-                        modifier = Modifier.clickable { onTimeSelected(currentHour, minute, currentIsPM) }.padding(4.dp)
+                        modifier = Modifier
+                            .clickable { onTimeSelected(currentHour, minute, currentIsPM) }
+                            .padding(4.dp)
                     )
                 }
             }
             Spacer(Modifier.height(16.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.Center
             ) {
-                val buttonModifier = Modifier.width(100.dp).height(40.dp)
+                val buttonModifier = Modifier.width(100.dp)
                 AmPmButton(
                     label = "AM",
                     isSelected = !currentIsPM,
                     onClick = { onTimeSelected(currentHour, currentMinute, false) },
-                    modifier = buttonModifier
+                    modifier = buttonModifier.weight(1f, fill = false)
                 )
-                Spacer(Modifier.width(16.dp))
+                Spacer(Modifier.weight(0.5f))
                 AmPmButton(
                     label = "PM",
                     isSelected = currentIsPM,
                     onClick = { onTimeSelected(currentHour, currentMinute, true) },
-                    modifier = buttonModifier
+                    modifier = buttonModifier.weight(1f, fill = false)
                 )
             }
         }
@@ -404,7 +402,8 @@ fun AmPmButton(label: String, isSelected: Boolean, onClick: () -> Unit, modifier
     val backgroundBrush = if (isSelected) {
         Brush.linearGradient(listOf(AppColors.Turbo, AppColors.Gold))
     } else {
-        Brush.solidColor(Color.Transparent)
+        // Correct way to set a transparent background in a conditional Brush
+        Brush.linearGradient(listOf(Color.Transparent, Color.Transparent))
     }
 
     OutlinedButton(
@@ -446,7 +445,7 @@ fun MonthYearPickerDialog(
     var selectedYear by remember { mutableIntStateOf(currentYear) }
     var selectedMonth by remember { mutableIntStateOf(currentMonth) }
 
-    val yearState = rememberLazyListState(initialFirstVisibleItemIndex = years.indexOf(currentYear).coerceAtLeast(0))
+    val yearState = rememberLazyListState(initialFirstVisibleItemIndex = years.indexOf(currentYear))
     val monthState = rememberLazyListState(initialFirstVisibleItemIndex = currentMonth)
 
     Dialog(onDismissRequest = onDismiss) {
