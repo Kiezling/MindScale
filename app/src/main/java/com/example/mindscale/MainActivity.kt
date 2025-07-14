@@ -165,20 +165,49 @@ fun MainScreen(
         }
 
         item {
-            Text("Recent Entries", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(8.dp))
-        }
-
-        items(recentEntries) { entry ->
-            EntryListItem(
-                entry = entry,
-                onDelete = { onDeleteEntry(entry) },
-                onEdit = { /*TODO*/ },
-                onEditNote = { /*TODO*/ }
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(320.dp) // Set fixed height
+                    .border(
+                        BorderStroke(
+                            1.dp,
+                            brush = getIntensityGradient(5) // UPDATED: Border gradient to match numpad 5
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally // UPDATED: Center header
+                ) {
+                    Text(
+                        "Recent Entries",
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(recentEntries) { entry ->
+                            EntryListItem(
+                                entry = entry,
+                                onDelete = { onDeleteEntry(entry) },
+                                onEdit = { /*TODO*/ },
+                                onEditNote = { /*TODO*/ }
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
         }
     }
 }
+
 
 @Composable
 fun LegendRow() {
@@ -586,8 +615,8 @@ fun NumberButton(
     onNumberLongPress: (Int) -> Unit
 ) {
     val gradient = getIntensityGradient(number)
-    // UPDATED: Text is white unless the number is 0
-    val textColor = if (number == 0) Color.Black else Color.White
+    // Text is white unless the number is 0-6
+    val textColor = if (number in 0..6) Color.Black else Color.White
 
     Box(
         modifier = Modifier
@@ -608,7 +637,6 @@ fun NumberButton(
 
 @Composable
 fun SleepWakeToggle(activeMode: String?, onModeSelected: (String) -> Unit) {
-    // UPDATED: Adjust the height of the buttons here
     val buttonModifier = Modifier
         .width(132.dp)
         .height(48.dp)
@@ -660,7 +688,8 @@ fun SleepWakeToggle(activeMode: String?, onModeSelected: (String) -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Nightlight, contentDescription = "Sleep")
                     Spacer(Modifier.width(8.dp))
-                    Text("Sleep")
+                    // Text size is set here
+                    Text("Sleep", fontSize = 16.sp)
                 }
             }
         }
@@ -692,7 +721,8 @@ fun SleepWakeToggle(activeMode: String?, onModeSelected: (String) -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.WbSunny, contentDescription = "Wake")
                     Spacer(Modifier.width(8.dp))
-                    Text("Wake")
+                    // Text size is set here
+                    Text("Wake", fontSize = 16.sp)
                 }
             }
         }
@@ -782,7 +812,7 @@ fun getIntensityGradient(intensity: Int): Brush {
         7 -> lighten(AppColors.Intensity7) to AppColors.Intensity7
         8 -> lighten(AppColors.Intensity8) to AppColors.Intensity8
         9 -> lighten(AppColors.Intensity9) to AppColors.Intensity9
-        10 -> lighten(AppColors.Intensity10) to AppColors.Intensity10
+        10 -> AppColors.GrayLight to AppColors.GrayDark
         else -> Color.LightGray to Color.Gray
     }
     return Brush.linearGradient(listOf(startColor, endColor))
