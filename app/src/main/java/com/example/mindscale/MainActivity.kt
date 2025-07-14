@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -174,7 +175,7 @@ fun DateTimePickerModal(onDismiss: () -> Unit, onSave: (Long) -> Unit) {
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = Color.White,
-            tonalElevation = 8.dp
+            tonalElevation = 0.dp
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -191,7 +192,7 @@ fun DateTimePickerModal(onDismiss: () -> Unit, onSave: (Long) -> Unit) {
                         unfocusedBorderColor = Color.Black
                     )
                 )
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
                 CalendarView(
                     calendar = calendarState,
                     onDateSelected = { day ->
@@ -200,7 +201,7 @@ fun DateTimePickerModal(onDismiss: () -> Unit, onSave: (Long) -> Unit) {
                     onMonthYearClick = { showMonthYearPicker = true },
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
                 TimePickerView(
                     calendar = calendarState,
                     onTimeSelected = { hour, minute, isPM ->
@@ -221,26 +222,23 @@ fun DateTimePickerModal(onDismiss: () -> Unit, onSave: (Long) -> Unit) {
                     OutlinedButton(
                         onClick = onDismiss,
                         shape = RoundedCornerShape(8.dp),
+                        // UPDATED: Border reverted to 1.dp
                         border = BorderStroke(1.dp, Color.Black),
                         modifier = buttonModifier
                     ) {
                         Text("Cancel", color = Color.Black)
                     }
-                    Button(
+                    OutlinedButton(
                         onClick = { onSave(calendarState.timeInMillis) },
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(0.dp),
                         modifier = buttonModifier,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
+                        // UPDATED: Border reverted to 1.dp
+                        border = BorderStroke(1.dp, Brush.linearGradient(listOf(AppColors.Turbo, AppColors.Gold))),
+                        colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.Transparent)
+
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Brush.linearGradient(listOf(AppColors.Turbo, AppColors.Gold)), shape = RoundedCornerShape(8.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("Save", color = Color.Black)
-                        }
+                        Text("Save", color = Color.Black)
                     }
                 }
             }
@@ -286,7 +284,7 @@ fun CalendarView(calendar: Calendar, onDateSelected: (Int) -> Unit, onMonthYearC
                 Text(days[it], textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             }
         }
-        LazyVerticalGrid(columns = GridCells.Fixed(7), modifier = Modifier.height(280.dp), userScrollEnabled = false) {
+        LazyVerticalGrid(columns = GridCells.Fixed(7), userScrollEnabled = false) {
             items(emptyDays) { Box(Modifier.size(40.dp)) }
             items(daysInMonth) { day ->
                 val dayNumber = day + 1
@@ -378,7 +376,7 @@ fun TimePickerView(calendar: Calendar, onTimeSelected: (Int, Int, Boolean) -> Un
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center
             ) {
-                val buttonModifier = Modifier.width(100.dp)
+                val buttonModifier = Modifier.width(80.dp).height(32.dp)
                 AmPmButton(
                     label = "AM",
                     isSelected = !currentIsPM,
@@ -399,17 +397,19 @@ fun TimePickerView(calendar: Calendar, onTimeSelected: (Int, Int, Boolean) -> Un
 
 @Composable
 fun AmPmButton(label: String, isSelected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val backgroundBrush = if (isSelected) {
+    val borderBrush = if (isSelected) {
         Brush.linearGradient(listOf(AppColors.Turbo, AppColors.Gold))
     } else {
-        // Correct way to set a transparent background in a conditional Brush
-        Brush.linearGradient(listOf(Color.Transparent, Color.Transparent))
+        SolidColor(Color.Black)
     }
+    val textColor = if (isSelected) AppColors.Gold else Color.Black
+
 
     OutlinedButton(
         onClick = onClick,
         shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, Color.Black),
+        // UPDATED: Border reverted to 1.dp
+        border = BorderStroke(1.dp, borderBrush),
         modifier = modifier,
         contentPadding = PaddingValues(0.dp),
         colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.Transparent)
@@ -417,10 +417,10 @@ fun AmPmButton(label: String, isSelected: Boolean, onClick: () -> Unit, modifier
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(backgroundBrush, shape = RoundedCornerShape(8.dp)),
+                .background(Color.Transparent, shape = RoundedCornerShape(8.dp)),
             contentAlignment = Alignment.Center
         ) {
-            Text(label, color = Color.Black)
+            Text(label, color = textColor)
         }
     }
 }
@@ -542,7 +542,7 @@ fun NumberButton(
             },
         contentAlignment = Alignment.Center
     ) {
-        Text(number.toString(), color = textColor, fontWeight = FontWeight.SemiBold, fontSize = 22.sp)
+        Text(number.toString(), color = textColor, fontWeight = FontWeight.SemiBold, fontSize = 28.sp)
     }
 }
 
@@ -592,7 +592,7 @@ fun EntryListItem(
             if (entry.intensity != null) {
                 Text(
                     entry.intensity.toString(),
-                    color = if ((entry.intensity) >= 7) Color.White else Color.Black,
+                    color = if (entry.intensity >= 7) Color.White else Color.Black,
                     fontWeight = FontWeight.Bold
                 )
             }
