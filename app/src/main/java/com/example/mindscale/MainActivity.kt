@@ -23,6 +23,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowLeft
 import androidx.compose.material.icons.automirrored.filled.ArrowRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Nightlight
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -101,8 +104,33 @@ fun MainScreen(
     ) {
         item {
             Spacer(Modifier.height(32.dp))
-            Text("MINDSCALE", style = Typography.displayLarge)
-            Spacer(Modifier.height(32.dp))
+            // UPDATED: Header with gradient
+            Text(
+                "MINDSCALE",
+                style = Typography.displayLarge.copy(
+                    brush = Brush.linearGradient(
+                        colors = listOf(AppColors.GrayDark, AppColors.Intensity5)
+                    )
+                )
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Track depression, anxiety, stress, etc.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color.Gray
+            )
+            Spacer(Modifier.height(24.dp))
+            LegendRow()
+            Spacer(Modifier.height(16.dp))
+            // UPDATED: Sub-subheader with new styling
+            Text(
+                "Long-press a number to add an entry with a custom time",
+                style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
+                color = Color.Gray,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(16.dp))
         }
 
         item {
@@ -133,6 +161,9 @@ fun MainScreen(
                 }
             )
             Spacer(Modifier.height(24.dp))
+            // UPDATED: Added divider
+            HorizontalDivider(color = Color.LightGray, thickness = 1.dp)
+            Spacer(Modifier.height(24.dp))
         }
 
         item {
@@ -147,6 +178,39 @@ fun MainScreen(
                 onEdit = { /*TODO*/ }
             )
             HorizontalDivider(color = Color.LightGray, thickness = 0.5.dp, modifier = Modifier.padding(vertical = 8.dp))
+        }
+    }
+}
+
+@Composable
+fun LegendRow() {
+    val legendItems = listOf(
+        "None" to AppColors.Gold,
+        "Mild" to AppColors.Intensity3,
+        "Moderate" to AppColors.Intensity6,
+        "Severe" to AppColors.Intensity8,
+        "Critical" to AppColors.Intensity10
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .border(BorderStroke(1.dp, Color.LightGray), RoundedCornerShape(8.dp))
+            .padding(vertical = 8.dp, horizontal = 16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        legendItems.forEach { (text, color) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier
+                    .size(12.dp)
+                    .clip(CircleShape)
+                    .background(color)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(text, style = MaterialTheme.typography.labelMedium)
+            }
         }
     }
 }
@@ -222,7 +286,6 @@ fun DateTimePickerModal(onDismiss: () -> Unit, onSave: (Long) -> Unit) {
                     OutlinedButton(
                         onClick = onDismiss,
                         shape = RoundedCornerShape(8.dp),
-                        // UPDATED: Border reverted to 1.dp
                         border = BorderStroke(1.dp, Color.Black),
                         modifier = buttonModifier
                     ) {
@@ -233,7 +296,6 @@ fun DateTimePickerModal(onDismiss: () -> Unit, onSave: (Long) -> Unit) {
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(0.dp),
                         modifier = buttonModifier,
-                        // UPDATED: Border reverted to 1.dp
                         border = BorderStroke(1.dp, Brush.linearGradient(listOf(AppColors.Turbo, AppColors.Gold))),
                         colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.Transparent)
 
@@ -408,7 +470,6 @@ fun AmPmButton(label: String, isSelected: Boolean, onClick: () -> Unit, modifier
     OutlinedButton(
         onClick = onClick,
         shape = RoundedCornerShape(8.dp),
-        // UPDATED: Border reverted to 1.dp
         border = BorderStroke(1.dp, borderBrush),
         modifier = modifier,
         contentPadding = PaddingValues(0.dp),
@@ -499,14 +560,14 @@ fun NumberPad(onNumberTap: (Int) -> Unit, onNumberLongPress: (Int) -> Unit) {
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.padding(16.dp)
     ) {
         // Row 0
         NumberButton(number = 0, shape = buttonShape, size = buttonSize, onNumberTap = onNumberTap, onNumberLongPress = onNumberLongPress)
         // Rows 1-3
         (1..3).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..3).forEach { col ->
                     val number = (row - 1) * 3 + col
                     NumberButton(number = number, shape = buttonShape, size = buttonSize, onNumberTap = onNumberTap, onNumberLongPress = onNumberLongPress)
@@ -546,31 +607,98 @@ fun NumberButton(
     }
 }
 
-
 @Composable
 fun SleepWakeToggle(activeMode: String?, onModeSelected: (String) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        val sleepBorder = if (activeMode == "sleep") BorderStroke(2.dp, Brush.linearGradient(listOf(AppColors.Turbo, AppColors.Gold))) else BorderStroke(1.dp, AppColors.GrayLight)
-        val wakeBorder = if (activeMode == "wake") BorderStroke(2.dp, Brush.linearGradient(listOf(AppColors.Turbo, AppColors.Gold))) else BorderStroke(1.dp, AppColors.GrayLight)
+    // UPDATED: Centralized button modifier
+    val buttonModifier = Modifier.width(132.dp).height(64.dp)
 
-        OutlinedButton(
+    val sleepButtonColors = ButtonDefaults.buttonColors(
+        containerColor = Color.Transparent,
+        contentColor = Color.White
+    )
+
+    val goldBorder = BorderStroke(2.dp, Brush.linearGradient(listOf(AppColors.Turbo, AppColors.Gold)))
+
+    // Lighten the GrayWake color for the gradient start
+    val lightFactor = 1.15f
+    val lightGrayWake = Color(
+        red = (AppColors.GrayWake.red * lightFactor).coerceIn(0f, 1f),
+        green = (AppColors.GrayWake.green * lightFactor).coerceIn(0f, 1f),
+        blue = (AppColors.GrayWake.blue * lightFactor).coerceIn(0f, 1f)
+    )
+
+    val wakeButtonColors = ButtonDefaults.buttonColors(
+        containerColor = Color.Transparent,
+        contentColor = Color.Black
+    )
+
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        // Sleep Button
+        Button(
             onClick = { onModeSelected("sleep") },
-            shape = RoundedCornerShape(50),
-            border = sleepBorder,
-            modifier = Modifier.width(132.dp)
+            shape = RoundedCornerShape(8.dp),
+            modifier = buttonModifier,
+            contentPadding = PaddingValues(),
+            colors = sleepButtonColors,
+            border = if (activeMode == "sleep") goldBorder else null
         ) {
-            Text("Sleep", color = if (activeMode == "sleep") AppColors.Gold else Color.Gray)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        brush = Brush.linearGradient(
+                            listOf(
+                                AppColors.GrayLight,
+                                AppColors.GrayDark
+                            )
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Nightlight, contentDescription = "Sleep")
+                    Spacer(Modifier.width(8.dp))
+                    Text("Sleep")
+                }
+            }
         }
-        OutlinedButton(
+
+        // Wake Button
+        Button(
             onClick = { onModeSelected("wake") },
-            shape = RoundedCornerShape(50),
-            border = wakeBorder,
-            modifier = Modifier.width(132.dp)
+            shape = RoundedCornerShape(8.dp),
+            modifier = buttonModifier,
+            colors = wakeButtonColors,
+            contentPadding = PaddingValues(),
+            border = if (activeMode == "wake") goldBorder else null
         ) {
-            Text("Wake", color = if (activeMode == "wake") AppColors.Gold else Color.Gray)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        brush = Brush.linearGradient(
+                            listOf(
+                                lightGrayWake,
+                                AppColors.GrayWake
+                            )
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.WbSunny, contentDescription = "Wake")
+                    Spacer(Modifier.width(8.dp))
+                    Text("Wake")
+                }
+            }
         }
     }
 }
+
 
 @Composable
 fun EntryListItem(

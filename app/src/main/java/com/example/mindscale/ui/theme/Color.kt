@@ -2,7 +2,6 @@ package com.example.mindscale.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// UPDATED: Removed unused properties to resolve warnings.
 object AppColors {
     val Gold = Color(0xFFffce00)
     val Turbo = Color(0xFFffe000)
@@ -21,4 +20,7 @@ object AppColors {
 
     // Gray for UI elements like borders
     val GrayLight = Color(0xFF555555)
+    // UPDATED: Added new GrayDark color
+    val GrayDark = Color(0xFF222222)
+    val GrayWake = Color(0xFFF0F0F0)
 }
