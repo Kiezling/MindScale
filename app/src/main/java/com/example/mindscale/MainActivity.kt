@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowLeft
 import androidx.compose.material.icons.automirrored.filled.ArrowRight
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Nightlight
 import androidx.compose.material.icons.filled.WbSunny
@@ -104,7 +105,6 @@ fun MainScreen(
     ) {
         item {
             Spacer(Modifier.height(32.dp))
-            // UPDATED: Header with gradient
             Text(
                 "MINDSCALE",
                 style = Typography.displayLarge.copy(
@@ -122,7 +122,6 @@ fun MainScreen(
             Spacer(Modifier.height(24.dp))
             LegendRow()
             Spacer(Modifier.height(16.dp))
-            // UPDATED: Sub-subheader with new styling
             Text(
                 "Long-press a number to add an entry with a custom time",
                 style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
@@ -161,7 +160,6 @@ fun MainScreen(
                 }
             )
             Spacer(Modifier.height(24.dp))
-            // UPDATED: Added divider
             HorizontalDivider(color = Color.LightGray, thickness = 1.dp)
             Spacer(Modifier.height(24.dp))
         }
@@ -175,9 +173,9 @@ fun MainScreen(
             EntryListItem(
                 entry = entry,
                 onDelete = { onDeleteEntry(entry) },
-                onEdit = { /*TODO*/ }
+                onEdit = { /*TODO*/ },
+                onEditNote = { /*TODO*/ }
             )
-            HorizontalDivider(color = Color.LightGray, thickness = 0.5.dp, modifier = Modifier.padding(vertical = 8.dp))
         }
     }
 }
@@ -560,14 +558,14 @@ fun NumberPad(onNumberTap: (Int) -> Unit, onNumberLongPress: (Int) -> Unit) {
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier.padding(16.dp)
     ) {
         // Row 0
         NumberButton(number = 0, shape = buttonShape, size = buttonSize, onNumberTap = onNumberTap, onNumberLongPress = onNumberLongPress)
         // Rows 1-3
         (1..3).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 (1..3).forEach { col ->
                     val number = (row - 1) * 3 + col
                     NumberButton(number = number, shape = buttonShape, size = buttonSize, onNumberTap = onNumberTap, onNumberLongPress = onNumberLongPress)
@@ -588,7 +586,8 @@ fun NumberButton(
     onNumberLongPress: (Int) -> Unit
 ) {
     val gradient = getIntensityGradient(number)
-    val textColor = if (number in 7..10) Color.White else Color.Black
+    // UPDATED: Text is white unless the number is 0
+    val textColor = if (number == 0) Color.Black else Color.White
 
     Box(
         modifier = Modifier
@@ -609,8 +608,10 @@ fun NumberButton(
 
 @Composable
 fun SleepWakeToggle(activeMode: String?, onModeSelected: (String) -> Unit) {
-    // UPDATED: Centralized button modifier
-    val buttonModifier = Modifier.width(132.dp).height(64.dp)
+    // UPDATED: Adjust the height of the buttons here
+    val buttonModifier = Modifier
+        .width(132.dp)
+        .height(48.dp)
 
     val sleepButtonColors = ButtonDefaults.buttonColors(
         containerColor = Color.Transparent,
@@ -619,7 +620,6 @@ fun SleepWakeToggle(activeMode: String?, onModeSelected: (String) -> Unit) {
 
     val goldBorder = BorderStroke(2.dp, Brush.linearGradient(listOf(AppColors.Turbo, AppColors.Gold)))
 
-    // Lighten the GrayWake color for the gradient start
     val lightFactor = 1.15f
     val lightGrayWake = Color(
         red = (AppColors.GrayWake.red * lightFactor).coerceIn(0f, 1f),
@@ -704,11 +704,15 @@ fun SleepWakeToggle(activeMode: String?, onModeSelected: (String) -> Unit) {
 fun EntryListItem(
     entry: WellnessEntry,
     onDelete: () -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    onEditNote: () -> Unit
 ) {
     val formattedDate = SimpleDateFormat("M/d/yy, h:mm a", Locale.getDefault()).format(Date(entry.timestamp))
 
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         // Intensity Badge
         Box(
             modifier = Modifier
@@ -725,21 +729,33 @@ fun EntryListItem(
                 )
             }
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(8.dp))
 
-        // Info Column
-        Column(modifier = Modifier.weight(1f)) {
-            Text(entry.type.replaceFirstChar { it.uppercase() }, fontWeight = FontWeight.SemiBold)
-            Text(formattedDate, fontSize = 12.sp, color = Color.Gray)
+        // Sleep/Wake Icon
+        when (entry.type) {
+            "sleep" -> Icon(Icons.Default.Nightlight, "Sleep", tint = Color.Gray)
+            "wake" -> Icon(Icons.Default.WbSunny, "Wake", tint = Color.Gray)
         }
+        Spacer(Modifier.width(8.dp))
+
+        // Date and Time
+        Text(
+            text = formattedDate,
+            fontSize = 14.sp,
+            color = Color.Gray,
+            modifier = Modifier.weight(1f)
+        )
 
         // Action Icons
         Row {
+            IconButton(onClick = onEditNote) {
+                Icon(Icons.Default.Description, "Edit Note", tint = Color.Gray)
+            }
             IconButton(onClick = onEdit) {
-                Icon(Icons.Default.Edit, "Edit Entry")
+                Icon(Icons.Default.Edit, "Edit Entry", tint = Color.Gray)
             }
             IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, "Delete Entry")
+                Icon(Icons.Default.Delete, "Delete Entry", tint = Color.Gray)
             }
         }
     }
